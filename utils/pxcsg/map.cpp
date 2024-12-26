@@ -440,12 +440,6 @@ static void SetupSideParams( mapent_t *mapent, brush_t *brush, side_t *side )
 	}
 
 	// diffusion
-	if (BoolForKey((entity_t *)mapent, "zhlt_nolightmap") || !Q_stricmp(side->name, "black"))
-	{
-		SetBits(side->flags, FSIDE_NOLIGHTMAP);
-	}
-
-	// diffusion
 	if (BoolForKey((entity_t *)mapent, "zhlt_nullifyhull"))
 	{
 		SetBits(brush->flags, FBRUSH_CLIPONLY);
@@ -456,7 +450,7 @@ static void SetupSideParams( mapent_t *mapent, brush_t *brush, side_t *side )
 		SetBits( side->flags, FSIDE_NODRAW );
 
 	// disable lightmapping for brushes with special flag and for textures "black"
-	if (BoolForKey((entity_t *)mapent, "zhlt_nolightmap") || !Q_strnicmp(side->name, "black", 5))
+	if (BoolForKey((entity_t *)mapent, "zhlt_nolightmap") || !Q_stricmp(side->name, "black")) // diffusion - edit for "black"
 	{
 		SetBits(side->flags, FSIDE_NOLIGHTMAP);
 	}
