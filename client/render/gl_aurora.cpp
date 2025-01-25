@@ -25,7 +25,7 @@ void UTIL_CreateAurora( cl_entity_t *ent, const char *file, int attachment, floa
 
 	// verify file exists
 	// g-cont. idea! use COMPARE_FILE_TIME instead of LOAD_FILE
-	if( COMPARE_FILE_TIME( file, file, &iCompare ))
+	if( !g_fRenderInitialized || COMPARE_FILE_TIME( file, file, &iCompare ))
 	{
 		CParticleSystem *pSystem = new CParticleSystem( ent, file, attachment, lifetime );
 		g_pParticleSystems.AddSystem( pSystem );
@@ -363,6 +363,7 @@ CParticleSystem :: CParticleSystem( cl_entity_t *ent, const char *szFilename, in
 	enable = true;
 
 	entityMatrix.Identity();
+	ClearBounds(m_vecAbsMin, m_vecAbsMax);
 
 	if( !c_bCosTableInit )
 	{
@@ -822,10 +823,10 @@ AURSTATE CParticleSystem :: UpdateSystem( float frametime )
 
 		// check for contents to remove
 		if( m_iKillCondition == POINT_CONTENTS( m_pEntity->origin ))
-          	{
+        {
 			m_pEntity = NULL;
-          		enable = false;
-          	}
+          	enable = false;
+        }
 	}
 	else
 	{
@@ -877,6 +878,10 @@ AURSTATE CParticleSystem :: UpdateSystem( float frametime )
 	CParticle	*pParticle = m_pActiveParticle;
 	CParticle	*pLast = NULL;
 
+	if (tr.frametime != 0.0) {
+		ClearBounds(m_vecAbsMin, m_vecAbsMax);
+	}
+
 	while( pParticle )
 	{
 		if( UpdateParticle( pParticle, frametime ))
@@ -905,7 +910,12 @@ AURSTATE CParticleSystem :: UpdateSystem( float frametime )
 		}
 	}
 
-	return AURORA_DRAW;
+	if (!Mod_CheckBoxVisible(m_vecAbsMin, m_vecAbsMax)) {
+		return AURORA_INVISIBLE; // culled with PVS check
+	}
+	else {
+		return AURORA_DRAW;
+	}
 }
 
 void CParticleSystem :: DrawSystem( void )
@@ -1037,11 +1047,19 @@ bool CParticleSystem :: UpdateParticle( CParticle *part, float frametime )
 	part->m_fBlue += part->m_fBlueStep * frametime;
 	part->frame += part->m_fFrameStep * frametime;
 
+	if (!part->m_pEntity && (part->m_fSize <= 0.0f || part->m_fAlpha <= 0.0f)) {
+		return false;
+	}
+
 	if( part->m_fAngleStep )
 	{
 		part->m_fAngle += part->m_fAngleStep * frametime;
 		while( part->m_fAngle < 0 ) part->m_fAngle += 360;
 		while( part->m_fAngle > 360 ) part->m_fAngle -= 360;
+	}
+
+	if (tr.frametime != 0.0) {
+		AddPointToBounds(part->origin, m_vecAbsMin, m_vecAbsMax);
 	}
 
 	return true;
