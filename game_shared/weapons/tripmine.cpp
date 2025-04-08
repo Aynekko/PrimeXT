@@ -35,7 +35,7 @@ CTripmineWeaponContext::CTripmineWeaponContext(std::unique_ptr<IWeaponLayer>&& l
 	m_usTripFire = m_pLayer->PrecacheEvent("events/tripfire.sc");
 }
 
-int CTripmineWeaponContext::GetItemInfo(ItemInfo *p)
+int CTripmineWeaponContext::GetItemInfo(ItemInfo *p) const
 {
 	p->pszName = CLASSNAME_STR(TRIPMINE_CLASSNAME);
 	p->pszAmmo1 = "Trip Mine";
@@ -86,7 +86,7 @@ void CTripmineWeaponContext::PrimaryAttack( void )
 	params.eventindex = m_usTripFire;
 	params.delay = 0.0f;
 	params.origin = m_pLayer->GetGunPosition();
-	params.angles = m_pLayer->GetCameraOrientation();
+	params.angles = m_pLayer->GetViewAngles();
 	params.fparam1 = 0.0f;
 	params.fparam2 = 0.0f;
 	params.iparam1 = 0;
