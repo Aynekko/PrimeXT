@@ -114,12 +114,14 @@ void CSatchelWeaponContext::Holster( void )
 	
 	SendWeaponAnim( m_chargeReady ? SATCHEL_RADIO_HOLSTER : SATCHEL_DROP );
 
-	// EMIT_SOUND(ENT(m_pPlayer->pev), CHAN_WEAPON, "common/null.wav", 1.0, ATTN_NORM);
+#ifndef CLIENT_DLL
+	CSatchel *pWeapon = static_cast<CSatchel*>(m_pLayer->GetWeaponEntity());
+	EMIT_SOUND(ENT(pWeapon->m_pPlayer->pev), CHAN_WEAPON, "common/null.wav", 1.0f, ATTN_NORM);
+#endif
 
 	if ( !m_pLayer->GetPlayerAmmo(PrimaryAmmoIndex()) && !m_chargeReady )
 	{
 #ifndef CLIENT_DLL
-		CSatchel *pWeapon = static_cast<CSatchel*>(m_pLayer->GetWeaponEntity());
 		pWeapon->m_pPlayer->RemoveWeapon( WEAPON_SATCHEL );
 		pWeapon->SetThink( &CSatchel::DestroyItem );
 		pWeapon->pev->nextthink = gpGlobals->time + 0.1f;
@@ -154,7 +156,7 @@ void CSatchelWeaponContext::PrimaryAttack( void )
 		}
 #endif
 		m_chargeReady = 2;
-		m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.5f);
 		m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f;
 		m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f;
 	}
@@ -194,7 +196,7 @@ void CSatchelWeaponContext::Throw( void )
 
 		m_chargeReady = 1;
 		m_pLayer->SetPlayerAmmo(PrimaryAmmoIndex(), m_pLayer->GetPlayerAmmo(PrimaryAmmoIndex()) - 1);
-		m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 1.0;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(1.0f);
 		m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5;
 	}
 }
@@ -242,7 +244,7 @@ void CSatchelWeaponContext::WeaponIdle( void )
 		m_pLayer->SetPlayerViewmodel("models/v_satchel.mdl");
 		SendWeaponAnim( SATCHEL_DRAW );
 
-		m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.5f);
 		m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f;
 		m_chargeReady = 0;
 		break;
