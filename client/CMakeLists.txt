@@ -150,11 +150,19 @@ if(MSVC)
 	# release mode compiler flags
 	target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/O2>) # enable optimizing to maximize speed
 	target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/GL>) # enable whole program optimization
+
+	# enable dynamic debugging feature for release mode
+	target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:RelWithDebInfo>:/dynamicdeopt>)
+	target_link_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:RelWithDebInfo>:/dynamicdeopt>)
 endif()
 
 # set static compiler runtime
 if(ENABLE_STATIC_CRT_LINKING)
 	set_compiler_runtime(${PROJECT_NAME} STATIC)
+endif()
+
+if(ENABLE_TRACY_PROFILER)
+	target_link_libraries(${PROJECT_NAME} PRIVATE tracy-client)
 endif()
 
 # linking vgui library if needed
