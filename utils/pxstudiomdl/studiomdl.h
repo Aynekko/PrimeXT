@@ -1,5 +1,6 @@
 #include <utlarray.h>
 #include "mathlib.h"
+#include <cstring>
 
 #ifndef EXTERN
 #define EXTERN extern
@@ -56,8 +57,7 @@ EXTERN	bool	g_collapse_bones_aggressive;
 EXTERN	bool	g_lockbonelengths;
 EXTERN	int	maxseqgroupsize;
 EXTERN	bool	g_multistagegraph;
-EXTERN	int	split_textures;
-EXTERN	int	clip_texcoords;
+EXTERN	bool	clip_texcoords;
 EXTERN	bool	store_uv_coords;
 EXTERN	bool	allow_tileing;
 EXTERN	bool	allow_boneweights;
@@ -719,16 +719,23 @@ typedef struct s_model_s
 EXTERN s_model_t		*g_model[MAXSTUDIOMODELS];
 EXTERN int		g_nummodels;
 
-typedef struct
+struct s_bodypart_t
 {
+	s_bodypart_t() :
+		nummodels(0),
+		base(0)
+	{
+		std::memset(name, 0x0, sizeof(name));
+		std::memset(pmodel, 0x0, sizeof(pmodel));
+	}
+		
 	char		name[MAXSRCSTUDIONAME];
 	int		nummodels;
 	int		base;
 	s_model_t		*pmodel[MAXSTUDIOMODELS];
-} s_bodypart_t;
+};
 
-EXTERN s_bodypart_t		g_bodypart[MAXSTUDIOBODYPARTS];
-EXTERN int		g_numbodyparts;
+EXTERN CUtlArray<s_bodypart_t> g_bodypart;
 
 typedef struct
 {

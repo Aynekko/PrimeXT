@@ -70,14 +70,14 @@ void CMP5WeaponContext::PrimaryAttack()
 	if (m_pLayer->GetPlayerWaterlevel() == 3)
 	{
 		PlayEmptySound();
-		m_flNextPrimaryAttack = 0.15;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.15f);
 		return;
 	}
 
 	if (m_iClip <= 0)
 	{
 		PlayEmptySound();
-		m_flNextPrimaryAttack = 0.15;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.15f);
 		return;
 	}
 
@@ -118,7 +118,7 @@ void CMP5WeaponContext::PrimaryAttack()
 		player->SetSuitUpdate("!HEV_AMO0", FALSE, 0);
 #endif
 
-	m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.1f;
+	m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.1f);
 	m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + m_pLayer->GetRandomFloat(m_pLayer->GetRandomSeed(), 10.f, 15.f);
 }
 
@@ -128,7 +128,7 @@ void CMP5WeaponContext::SecondaryAttack()
 	if (m_pLayer->GetPlayerWaterlevel() == 3)
 	{
 		PlayEmptySound();
-		m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.15;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.15f);
 		return;
 	}
 
@@ -140,15 +140,12 @@ void CMP5WeaponContext::SecondaryAttack()
 
 	m_pLayer->SetPlayerAmmo(m_iSecondaryAmmoType, m_pLayer->GetPlayerAmmo(m_iSecondaryAmmoType) - 1);
 
-	Vector vecSrc = m_pLayer->GetGunPosition();
-	matrix3x3 cameraTransform = m_pLayer->GetCameraOrientation();
-
 	WeaponEventParams params;
 	params.flags = WeaponEventFlags::NotHost;
 	params.eventindex = m_usEvent2;
 	params.delay = 0.0f;
-	params.origin = vecSrc;
-	params.angles = cameraTransform.GetAngles();
+	params.origin = m_pLayer->GetGunPosition();
+	params.angles = m_pLayer->GetViewAngles();
 	params.fparam1 = 0;
 	params.fparam2 = 0;
 	params.iparam1 = 0;
@@ -178,7 +175,7 @@ void CMP5WeaponContext::SecondaryAttack()
 		player->SetSuitUpdate("!HEV_AMO0", FALSE, 0);
 #endif
 
-	m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 1.f;
+	m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(1.0f);
 	m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 1.f;
 	m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 5.f; // idle pretty soon after shooting.
 

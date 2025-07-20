@@ -6,7 +6,8 @@ on:
   pull_request:
     paths-ignore:
       - 'documentation/**'
-
+  workflow_dispatch:
+  
 permissions:
   contents: write
 
@@ -14,6 +15,7 @@ jobs:
   build-generic:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -28,7 +30,7 @@ jobs:
             cmake_preset: windows-x64-release
             build_conf: RelWithDebInfo
             devenv_arch: amd64
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             cmake_preset: linux-x64-debug
             build_conf: Debug
             devenv_arch: none
@@ -36,17 +38,16 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Enables the vcpkg dependency graph integration.
       VCPKG_FEATURE_FLAGS: dependencygraph
-      # Let's use GitHub Action cache as storage for the vcpkg Binary Caching feature.
-      VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
     steps:
-      # Set env vars needed for vcpkg to leverage the GitHub Action cache as a storage
-      # for Binary Caching.
-      - name: Set env vars needed for vcpkg to leverage the GitHub Action cache
-        uses: actions/github-script@v6
+      - name: Obtain running job information
+        uses: qoomon/actions--context@v4
+
+      - name: Check for pull request
+        uses: 8BitJonny/gh-get-current-pr@2.2.0
+        id: pr-check
         with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+          # Verbose setting SHA when using Pull_Request event trigger to fix #16. (For push even trigger this is not necessary.)
+          sha: ${{ github.event.pull_request.head.sha }} 
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,8 +56,6 @@ jobs:
           fetch-depth: 0
 
       - name: Create build environment
-        # Some projects don't allow in-source building, so create a separate build directory
-        # We'll use this as our working directory for all subsequent commands
         run: cmake -E make_directory ${{ github.workspace }}/build
 
       - uses: ilammy/msvc-dev-cmd@v1.12.1
@@ -64,9 +63,9 @@ jobs:
         with:
           arch: ${{ matrix.devenv_arch }}
 
-      - name: Dynamically set vcpkg-related environment variables
-        # We need this because previous step overwrites VCPKG_ROOT envvar on Windows runners 
-        uses: actions/github-script@v6
+      # We need this because previous step overwrites VCPKG_ROOT envvar on Windows runners 
+      - name: Setup vcpkg-related environment variables
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('VCPKG_ROOT', `${process.env.GITHUB_WORKSPACE}/external/vcpkg`.replaceAll('\\', '/'));
@@ -88,8 +87,9 @@ jobs:
 
       # Restore vcpkg from the GitHub Action cache service. Note that packages are restored by vcpkg's binary caching
       # when it is being run afterwards by CMake.
-      - name: Restore vcpkg
-        uses: actions/cache@v3
+      - name: Restoring cached vcpkg assets
+        id: vcpkg-cache-restore
+        uses: actions/cache/restore@v4
         with:
           # The first path is the location of vcpkg: it contains the vcpkg executable and data files, as long as the
           # built package archives (aka binary cache) which are located by VCPKG_DEFAULT_BINARY_CACHE env var.
@@ -101,20 +101,16 @@ jobs:
             !${{ env.VCPKG_ROOT }}/downloads
             !${{ env.VCPKG_ROOT }}/installed
           # The key is composed in a way that it gets properly invalidated whenever a different version of vcpkg is being used.
-          key: |
-            ${{ hashFiles( '.git/modules/external/vcpkg/HEAD' )}}
+          key: vcpkg-${{ hashFiles('.git/modules/external/vcpkg/HEAD') }}-${{ runner.os }}-${{ env.GITHUB_JOB_ID }}
+          restore-keys: vcpkg-${{ hashFiles('.git/modules/external/vcpkg/HEAD') }}-${{ runner.os }}
 
       - name: Configure CMake
         working-directory: ${{ github.workspace }}/build
-        # Note the current convention is to use the -S and -B options here to specify source
-        # and build directories, but this is only available with CMake 3.13 and higher.
-        # The CMake binaries on the Github Actions machines are (as of this writing) 3.12
         run: cmake "${{ github.workspace }}" --preset ${{ matrix.cmake_preset }}
 
       - name: Build
         working-directory: ${{ github.workspace }}/build
-        # Execute the build. You can specify a specific target with "--target <NAME>"
-        run: cmake --build . --parallel 4
+        run: cmake --build . --parallel $(nproc)
 
       - name: Prepare artifacts
         shell: bash
@@ -142,13 +138,26 @@ jobs:
           Compress-Archive -Path publish\* -Destination artifacts\primext-${{ matrix.cmake_preset }}.zip
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4.4.0
+        uses: actions/upload-artifact@v4
         with:
           name: artifact-${{ matrix.cmake_preset }}
           path: artifacts/*
 
+      - name: Saving vcpkg assets to cache
+        uses: actions/cache/save@v4
+        if: ${{ always() && github.ref == 'refs/heads/master' && steps.pr-check.outputs.pr_found == 'false' }}
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}
+            !${{ env.VCPKG_ROOT }}/buildtrees
+            !${{ env.VCPKG_ROOT }}/packages
+            !${{ env.VCPKG_ROOT }}/downloads
+            !${{ env.VCPKG_ROOT }}/installed
+          key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
+
   build-android:
     runs-on: ubuntu-latest
+    continue-on-error: true
     strategy:
       matrix:
         conf: [Debug]
@@ -187,7 +196,7 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/primext-debug.apk
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4.4.0
+        uses: actions/upload-artifact@v4
         with:
           name: artifact-android-debug
           path: artifacts/*
@@ -206,7 +215,7 @@ jobs:
 
       - name: Fetch artifacts
         if: ${{ always() && github.ref == 'refs/heads/master' && steps.pr-check.outputs.pr_found == 'false' }}
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v4
         with:
           path: artifacts/
 

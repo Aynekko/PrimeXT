@@ -35,7 +35,7 @@ CTripmineWeaponContext::CTripmineWeaponContext(std::unique_ptr<IWeaponLayer>&& l
 	m_usTripFire = m_pLayer->PrecacheEvent("events/tripfire.sc");
 }
 
-int CTripmineWeaponContext::GetItemInfo(ItemInfo *p)
+int CTripmineWeaponContext::GetItemInfo(ItemInfo *p) const
 {
 	p->pszName = CLASSNAME_STR(TRIPMINE_CLASSNAME);
 	p->pszAmmo1 = "Trip Mine";
@@ -59,13 +59,16 @@ bool CTripmineWeaponContext::Deploy( )
 
 void CTripmineWeaponContext::Holster( void )
 {
+#ifndef CLIENT_DLL
+	CTripmine *pWeapon = static_cast<CTripmine*>(m_pLayer->GetWeaponEntity());
+#endif
+
 	m_pLayer->SetPlayerNextAttackTime(m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f);
 
 	if (!m_pLayer->GetPlayerAmmo(m_iPrimaryAmmoType))
 	{
 #ifndef CLIENT_DLL
 		// out of mines
-		CTripmine *pWeapon = static_cast<CTripmine*>(m_pLayer->GetWeaponEntity());
 		pWeapon->m_pPlayer->RemoveWeapon( WEAPON_TRIPMINE );
 		pWeapon->SetThink( &CBasePlayerItem::DestroyItem );
 		pWeapon->pev->nextthink = gpGlobals->time + 0.1;
@@ -73,7 +76,9 @@ void CTripmineWeaponContext::Holster( void )
 	}
 
 	SendWeaponAnim( TRIPMINE_HOLSTER );
-	// EMIT_SOUND(ENT(m_pPlayer->pev), CHAN_WEAPON, "common/null.wav", 1.0, ATTN_NORM);
+#ifndef CLIENT_DLL
+	EMIT_SOUND(ENT(pWeapon->m_pPlayer->pev), CHAN_WEAPON, "common/null.wav", 1.0f, ATTN_NORM);
+#endif
 }
 
 void CTripmineWeaponContext::PrimaryAttack( void )
@@ -86,7 +91,7 @@ void CTripmineWeaponContext::PrimaryAttack( void )
 	params.eventindex = m_usTripFire;
 	params.delay = 0.0f;
 	params.origin = m_pLayer->GetGunPosition();
-	params.angles = m_pLayer->GetCameraOrientation();
+	params.angles = m_pLayer->GetViewAngles();
 	params.fparam1 = 0.0f;
 	params.fparam2 = 0.0f;
 	params.iparam1 = 0;
@@ -145,7 +150,7 @@ void CTripmineWeaponContext::PrimaryAttack( void )
 		}
 	}
 #endif
-	m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.3f;
+	m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.3f);
 	m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + m_pLayer->GetRandomFloat(m_pLayer->GetRandomSeed(), 10.0f, 15.0f);
 }
 

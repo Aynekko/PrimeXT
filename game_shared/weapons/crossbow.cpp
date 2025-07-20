@@ -40,7 +40,7 @@ CCrossbowWeaponContext::CCrossbowWeaponContext(std::unique_ptr<IWeaponLayer> &&l
 	m_usCrossbow2 = m_pLayer->PrecacheEvent("events/crossbow2.sc");
 }
 
-int CCrossbowWeaponContext::GetItemInfo(ItemInfo *p)
+int CCrossbowWeaponContext::GetItemInfo(ItemInfo *p) const
 {
 	p->pszName = CLASSNAME_STR(CROSSBOW_CLASSNAME);
 	p->pszAmmo1 = "bolts";
@@ -50,7 +50,7 @@ int CCrossbowWeaponContext::GetItemInfo(ItemInfo *p)
 	p->iMaxClip = CROSSBOW_MAX_CLIP;
 	p->iSlot = 2;
 	p->iPosition = 2;
-	p->iId = WEAPON_CROSSBOW;
+	p->iId = m_iId;
 	p->iFlags = 0;
 	p->iWeight = CROSSBOW_WEIGHT;
 	return 1;
@@ -82,34 +82,32 @@ void CCrossbowWeaponContext::Holster( void )
 
 void CCrossbowWeaponContext::PrimaryAttack( void )
 {
-	if ( m_fInZoom && m_pLayer->IsMultiplayer() )
+	if (m_iClip < 1)
 	{
-		FireSniperBolt();
-		return;
-	}
-
-	FireBolt();
-}
-
-// this function only gets called in multiplayer
-void CCrossbowWeaponContext::FireSniperBolt()
-{
-	m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.75f;
-
-	if (m_iClip == 0)
-	{
-		PlayEmptySound( );
+		PlayEmptySound();
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.15f);
 		return;
 	}
 
 	m_iClip--;
 
+	if (m_fInZoom && m_pLayer->IsMultiplayer()) {
+		FireSniperBolt();
+	}
+	else {
+		FireBolt();
+	}
+}
+
+// this function only gets called in multiplayer
+void CCrossbowWeaponContext::FireSniperBolt()
+{
 	WeaponEventParams params;
 	params.flags = WeaponEventFlags::NotHost;
 	params.eventindex = m_usCrossbow2;
 	params.delay = 0.0f;
 	params.origin = m_pLayer->GetGunPosition();
-	params.angles = m_pLayer->GetCameraOrientation().GetAngles();
+	params.angles = m_pLayer->GetViewAngles();
 	params.fparam1 = 0;
 	params.fparam2 = 0;
 	params.iparam1 = 0;
@@ -121,6 +119,7 @@ void CCrossbowWeaponContext::FireSniperBolt()
 		m_pLayer->PlaybackWeaponEvent(params);
 	}
 
+	m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.75f);
 #ifndef CLIENT_DLL
 	CBasePlayer *player = m_pLayer->GetWeaponEntity()->m_pPlayer;
 	player->SetAnimation( PLAYER_ATTACK1 );
@@ -180,20 +179,12 @@ void CCrossbowWeaponContext::FireSniperBolt()
 
 void CCrossbowWeaponContext::FireBolt( void )
 {
-	if (m_iClip == 0)
-	{
-		PlayEmptySound( );
-		return;
-	}
-
-	m_iClip--;
-
 	WeaponEventParams params;
 	params.flags = WeaponEventFlags::NotHost;
 	params.eventindex = m_usCrossbow;
 	params.delay = 0.0f;
 	params.origin = m_pLayer->GetGunPosition();
-	params.angles = m_pLayer->GetCameraOrientation().GetAngles();
+	params.angles = m_pLayer->GetViewAngles();
 	params.fparam1 = 0;
 	params.fparam2 = 0;
 	params.iparam1 = 0;
@@ -204,6 +195,15 @@ void CCrossbowWeaponContext::FireBolt( void )
 	if (m_pLayer->ShouldRunFuncs()) {
 		m_pLayer->PlaybackWeaponEvent(params);
 	}
+
+	m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.75f);
+	m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.75f;
+
+	if (m_iClip != 0)
+		m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 5.0f;
+	else
+		m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.75f;
+
 
 #ifndef CLIENT_DLL
 	// player "shoot" animation
@@ -252,14 +252,6 @@ void CCrossbowWeaponContext::FireBolt( void )
 		// HEV suit - indicate out of ammo condition
 		player->SetSuitUpdate("!HEV_AMO0", FALSE, 0);
 
-	m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.75;
-	m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.75;
-
-	if (m_iClip != 0)
-		m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 5.0;
-	else
-		m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.75;
-
 	// m_pPlayer->pev->punchangle.x -= 2;
 #endif
 }
@@ -277,8 +269,8 @@ void CCrossbowWeaponContext::SecondaryAttack( void )
 		m_fInZoom = true;
 	}
 	
-	m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.3;
-	m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 5.0;
+	m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.3f;
+	m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 5.0f;
 }
 
 void CCrossbowWeaponContext::Reload( void )

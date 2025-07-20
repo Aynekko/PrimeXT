@@ -90,7 +90,8 @@ void CGaussWeaponContext::PrimaryAttack()
 	if (m_pLayer->GetPlayerWaterlevel() == 3)
 	{
 		PlayEmptySound();
-		m_flNextSecondaryAttack = m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.15f;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.15f);
+		m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.15f;
 		return;
 	}
 
@@ -140,7 +141,8 @@ void CGaussWeaponContext::SecondaryAttack()
 			PlayEmptySound( );
 		}
 
-		m_flNextSecondaryAttack = m_flNextPrimaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f;
+		m_flNextPrimaryAttack = GetNextPrimaryAttackDelay(0.5f);
+		m_flNextSecondaryAttack = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.5f;
 		return;
 	}
 
@@ -168,7 +170,7 @@ void CGaussWeaponContext::SecondaryAttack()
 		params.eventindex = m_usGaussSpin;
 		params.delay = 0.0f;
 		params.origin = m_pLayer->GetGunPosition();
-		params.angles = m_pLayer->GetCameraOrientation().GetAngles();
+		params.angles = m_pLayer->GetViewAngles();
 		params.fparam1 = 0.0f;
 		params.fparam2 = 0.0f;
 		params.iparam1 = 110;

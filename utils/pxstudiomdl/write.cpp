@@ -953,14 +953,14 @@ void WriteModel( void )
 	int		total_strips = 0;
 
 	pbodypart = (mstudiobodyparts_t *)pData;
-	phdr->numbodyparts = g_numbodyparts;
+	phdr->numbodyparts = g_bodypart.Count();
 	phdr->bodypartindex = (pData - pStart);
-	pData += g_numbodyparts * sizeof( mstudiobodyparts_t );
+	pData += g_bodypart.Count() * sizeof( mstudiobodyparts_t );
 
 	pmodel = (mstudiomodel_t *)pData;
 	pData += g_nummodels * sizeof( mstudiomodel_t );
 
-	for (i = 0, j = 0; i < g_numbodyparts; i++)
+	for (i = 0, j = 0; i < g_bodypart.Count(); i++)
 	{
 		CopyStringTruncate( pbodypart[i].name, g_bodypart[i].name, sizeof( pbodypart[0].name ));
 		pbodypart[i].nummodels = g_bodypart[i].nummodels;
@@ -1184,32 +1184,6 @@ void WriteFile( void )
 		memset( pStart, 0, pseqhdr->length );
 	}
 
-	if( split_textures )
-	{
-		// write textures out to a separate file
-		char texname[128];
-
-		sprintf( texname, "%sT.mdl", outname );
-
-		Msg( "writing %s:\n", texname );
-
-		phdr = (studiohdr_t *)pStart;
-		phdr->ident = IDSTUDIOHEADER;
-		phdr->version = STUDIO_VERSION;
-
-		pData = (byte *)phdr + sizeof( studiohdr_t );
-
-		WriteTextures( );
-
-		phdr->length = pData - pStart;
-		Msg( "textures   %7d bytes\n", phdr->length );
-
-		COM_SaveFile( texname, pStart, phdr->length, true );
-
-		memset( pStart, 0, phdr->length );
-		pData = pStart;
-	}
-
 //
 // write the model output file
 //
@@ -1311,12 +1285,8 @@ void WriteFile( void )
 	Msg( "keyvalues  %7d bytes\n", pData - pStart - total );
 
 	// NOTE: textures must be last!
-	if( !split_textures )
-	{
-		WriteTextures( );
-		Msg( "textures   %7d bytes\n", pData - pStart - total );
-		total  = pData - pStart;
-	}
+	WriteTextures( );
+	Msg( "textures   %7d bytes\n", pData - pStart - total );
 
 	total = pData - pStart;
 
