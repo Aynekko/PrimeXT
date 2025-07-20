@@ -424,7 +424,7 @@ void CStudioModelRenderer :: ProjectDecalOntoMesh( DecalBuildInfo_t& build )
 		svert_t *vert = &m_arrayxvert[j];
 
 		// No decal vertex yet...
-		build.m_pVertexInfo[j].m_VertexIndex = INVALID_HANDLE;
+		build.m_pVertexInfo[j].m_VertexIndex = INVALID_VERTEX_INDEX;
 
 		// We need to know if the normal is pointing in the negative direction
 		// if so, blow off all triangles connected to that vertex.
@@ -492,12 +492,12 @@ Adds a vertex to the list of vertices
 for this studiomesh
 ====================
 */
-word CStudioModelRenderer :: AddVertexToDecal( DecalBuildInfo_t& build, int vertIndex )
+int32_t CStudioModelRenderer :: AddVertexToDecal( DecalBuildInfo_t& build, int vertIndex )
 {
 	DecalVertexInfo_t* pVertexInfo = build.m_pVertexInfo;
 
 	// If we've never seen this vertex before, we need to add a new decal vert
-	if( pVertexInfo[vertIndex].m_VertexIndex == INVALID_HANDLE )
+	if( pVertexInfo[vertIndex].m_VertexIndex == INVALID_VERTEX_INDEX )
 	{
 		int v = build.m_Vertices.AddToTail();
 
@@ -525,7 +525,7 @@ AddVertexToDecal
 This creates a unique vertex
 ====================
 */
-word CStudioModelRenderer :: AddVertexToDecal( DecalBuildInfo_t& build, svert_t *vert )
+int32_t CStudioModelRenderer :: AddVertexToDecal( DecalBuildInfo_t& build, svert_t *vert )
 {
 	// Try to see if the clipped vertex already exists in our decal list...
 	// Only search for matches with verts appearing in the current decal
@@ -534,7 +534,7 @@ word CStudioModelRenderer :: AddVertexToDecal( DecalBuildInfo_t& build, svert_t 
 		svert_t *test = &build.m_Vertices[i];
 
 		// Only bother to check against clipped vertices
-		if( test->m_MeshVertexIndex != INVALID_HANDLE )
+		if( test->m_MeshVertexIndex != INVALID_VERTEX_INDEX )
 			continue;
 
 		if( !VectorCompareEpsilon( test->vertex, vert->vertex, 1e-3 ))
@@ -572,7 +572,7 @@ int CStudioModelRenderer :: IntersectPlane( DecalClipState_t& state, int start, 
 	int newVert = state.m_ClipVertCount++;
 
 	// the clipped vertex has no analogue in the original mesh
-	out->m_MeshVertexIndex = INVALID_HANDLE;
+	out->m_MeshVertexIndex = INVALID_VERTEX_INDEX;
 
 	// just select bone by interpolation factor
 	if( t <= 0.5f )
@@ -682,7 +682,7 @@ Adds the clipped triangle to the decal
 */
 void CStudioModelRenderer :: AddClippedDecalToTriangle( DecalBuildInfo_t& build, DecalClipState_t& clipState )
 {
-	word indices[7];
+	int32_t indices[7];
 	int i;
 
 	ASSERT( clipState.m_VertCount <= 7 );
@@ -1083,14 +1083,15 @@ void CStudioModelRenderer :: AddDecalToModel( DecalBuildInfo_t& buildInfo )
 	Vector *pstudionorms = (Vector *)((byte *)m_pStudioHeader + m_pSubModel->normindex);
 	byte *pvertbone = ((byte *)m_pStudioHeader + m_pSubModel->vertinfoindex);
 	bool has_boneweights = FBitSet(m_pStudioHeader->flags, STUDIO_HAS_BONEWEIGHTS) != 0;
-	short *pskinref;
+	short *pskinref = (short *)((byte *)m_pStudioHeader + m_pStudioHeader->skinindex);
 	int i, numVerts;
+	
+	std::vector<StudioMesh_t> decalMeshBuffer;
+	decalMeshBuffer.resize(m_pSubModel->nummesh);
+	StudioMesh_t *pDecalMesh = decalMeshBuffer.data();
 
-	// if weights was missed their offsets just equal to 0
-	mstudioboneweight_t	*pvertweight = (mstudioboneweight_t *)((byte *)m_pStudioHeader + m_pSubModel->blendvertinfoindex);
-	StudioMesh_t *pDecalMesh = (StudioMesh_t *)stackalloc( m_pSubModel->nummesh * sizeof( StudioMesh_t ));
-	pskinref = (short *)((byte *)m_pStudioHeader + m_pStudioHeader->skinindex);
-	if( !pDecalMesh ) return; // empty mesh?
+	if( !pDecalMesh ) 
+		return; // empty mesh?
 
 	buildInfo.m_pVertexLight = NULL;
 
@@ -1111,6 +1112,9 @@ void CStudioModelRenderer :: AddDecalToModel( DecalBuildInfo_t& buildInfo )
 
 	m_nNumArrayVerts = m_nNumArrayElems = 0;
 	m_nNumLightVerts = 0;
+
+	// if weights was missed their offsets just equal to 0
+	mstudioboneweight_t	*pvertweight = (mstudioboneweight_t *)((byte *)m_pStudioHeader + m_pSubModel->blendvertinfoindex);
 
 	// build all the data for current submodel
 	for( i = 0; i < m_pSubModel->nummesh; i++ ) 
@@ -1241,7 +1245,9 @@ void CStudioModelRenderer :: AddDecalToModel( DecalBuildInfo_t& buildInfo )
 	}
 
 	// should keep all the verts of this submodel, because we use direct access by vertex number
-	buildInfo.m_pVertexInfo = (DecalVertexInfo_t *)stackalloc( m_nNumArrayVerts * sizeof( DecalVertexInfo_t ));
+	std::vector<DecalVertexInfo_t> decalVertexInfoBuffer;
+	decalVertexInfoBuffer.resize(m_nNumArrayVerts);
+	buildInfo.m_pVertexInfo = decalVertexInfoBuffer.data();
 
 	// project all vertices for this group into decal space
 	// Note we do this work at a mesh level instead of a model level

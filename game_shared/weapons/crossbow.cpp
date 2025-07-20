@@ -204,7 +204,6 @@ void CCrossbowWeaponContext::FireBolt( void )
 	else
 		m_flTimeWeaponIdle = m_pLayer->GetWeaponTimeBase(UsePredicting()) + 0.75f;
 
-
 #ifndef CLIENT_DLL
 	// player "shoot" animation
 	CBasePlayer *player = m_pLayer->GetWeaponEntity()->m_pPlayer;
@@ -251,9 +250,9 @@ void CCrossbowWeaponContext::FireBolt( void )
 	if (!m_iClip && player->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
 		// HEV suit - indicate out of ammo condition
 		player->SetSuitUpdate("!HEV_AMO0", FALSE, 0);
-
-	// m_pPlayer->pev->punchangle.x -= 2;
 #endif
+
+	m_pLayer->AddPlayerPunchangle(-2.f, 0.f, 0.f);
 }
 
 void CCrossbowWeaponContext::SecondaryAttack( void )
