@@ -88,6 +88,7 @@ public:
 	void checkboxSet( int id, bool bState );
 	void redraw();
 	bool shouldMaximizeWindow();
+	void getWindowSettings(int *x, int *y, int *w, int *h);
 
 	// ACCESSORS
 	mxMenuBar *getMenuBar () const { return mb; }

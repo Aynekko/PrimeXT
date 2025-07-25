@@ -85,6 +85,7 @@ public:
 	int width, height;
 	bool cds;
 	int showMaximized;
+	int x, y;
 
 	// colors
 	float bgColor[4];

@@ -219,6 +219,10 @@ bool ViewerSettings::Load()
 	JsonLoadInt(doc, "showGround", showGround);
 	JsonLoadString(doc, "groundTexPath", groundTexFile);
 	JsonLoadInt(doc, "showMaximized", showMaximized);
+	JsonLoadInt(doc, "x", x);
+	JsonLoadInt(doc, "y", y);
+	JsonLoadInt(doc, "width", width);
+	JsonLoadInt(doc, "height", height);
 
 	// load recent files array
 	rapidjson::Value &list = doc["recentFiles"];
@@ -250,6 +254,10 @@ bool ViewerSettings::Save()
 	JsonSaveInt(doc, "showGround", showGround);
 	JsonSaveString(doc, "groundTexPath", groundTexFile);
 	JsonSaveInt(doc, "showMaximized", showMaximized);
+	JsonSaveInt(doc, "x", x);
+	JsonSaveInt(doc, "y", y);
+	JsonSaveInt(doc, "width", width);
+	JsonSaveInt(doc, "height", height);
 
 	// save recent files list
 	rapidjson::Value jsonValue;

@@ -340,6 +340,13 @@ MDLViewer::~MDLViewer ()
 
 	m_settings.showMaximized = isMaximized();
 
+	RECT rect = { NULL };
+	GetWindowRect(static_cast<HWND>(getHandle()), &rect);
+	m_settings.x = rect.left;
+	m_settings.y = rect.top;
+	m_settings.width = rect.right - rect.left;
+	m_settings.height = rect.bottom - rect.top;
+
 	m_settings.Save();
 	m_studioModel->FreeModel();
 	m_studioModel->~StudioModel();
@@ -812,6 +819,34 @@ bool MDLViewer::shouldMaximizeWindow()
 	return m_settings.showMaximized;
 }
 
+void MDLViewer::getWindowSettings( int *x, int *y, int *w, int *h )
+{
+	*x = m_settings.x;
+	if (*x <= 0)
+	{
+		*x = 20;
+		m_settings.x = 20;
+	}
+	*y = m_settings.y;
+	if (*y <= 0)
+	{
+		*y = 20;
+		m_settings.y = 20;
+	}
+	*w = m_settings.width;
+	if (*w <= 0)
+	{
+		*w = 640;
+		m_settings.width = 640;
+	}
+	*h = m_settings.height;
+	if (*h <= 0)
+	{
+		*h = 540;
+		m_settings.height = 540;
+	}
+}
+
 int main( int argc, char *argv[] )
 {
 	//
@@ -844,7 +879,9 @@ int main( int argc, char *argv[] )
 	mx::init (argc, argv);
 	g_MDLViewer = new MDLViewer ();
 	g_MDLViewer->setMenuBar (g_MDLViewer->getMenuBar ());
-	g_MDLViewer->setBounds (20, 20, 640, 540);
+	int x, y, w, h;
+	g_MDLViewer->getWindowSettings(&x, &y, &w, &h);
+	g_MDLViewer->setBounds (x, y, w, h); // found it
 	g_MDLViewer->setVisible (true);
 
 	if( g_MDLViewer->shouldMaximizeWindow() )
