@@ -326,7 +326,9 @@ MDLViewer :: MDLViewer() :
 
 	initRecentFiles ();
 
-	setBounds (20, 20, 640, 540);
+	int x, y, w, h;
+	getWindowSettings(&x, &y, &w, &h);
+	setBounds(x, y, w, h);
 	setVisible (true);
 
 	if( m_settings.showGround )
@@ -889,7 +891,7 @@ int main( int argc, char *argv[] )
 	g_MDLViewer->setMenuBar (g_MDLViewer->getMenuBar ());
 	int x, y, w, h;
 	g_MDLViewer->getWindowSettings(&x, &y, &w, &h);
-	g_MDLViewer->setBounds (x, y, w, h); // found it
+	g_MDLViewer->setBounds (x, y, w, h);
 	g_MDLViewer->setVisible (true);
 
 	if( g_MDLViewer->shouldMaximizeWindow() )
