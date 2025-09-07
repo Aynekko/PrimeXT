@@ -519,7 +519,6 @@ void GetPhongNormal( int facenum, const vec3_t spot, vec3_t phongnormal )
 				VectorSubtract( s2, g_face_centroids[facenum], v2 );
 
 				VectorSubtract( spot, g_face_centroids[facenum], vspot );
-				VectorAdd( vspot, g_face_offset[facenum], vspot );
 
 				aa = DotProduct( v1, v1 );
 				bb = DotProduct( v2, v2 );
@@ -2335,6 +2334,10 @@ void LoadEnvSkyTextures( void )
 		else
 		{
 			Msg( "%s - failed to load\n", pszSkySideFileName);
+			Msg( "^3Warning:^7 failed to load skybox textures, light_environment will be used to get the sky color (if present)\n" );
+			FreeEnvSkyTextures();
+			g_envsky = false;
+			return;
 		}
 	}
 }
@@ -3614,7 +3617,11 @@ void PrecompLightmapOffsets( void )
 
 			if( e >= 0 ) vert = g_dvertexes + g_dedges[e].v[0];
 			else vert = g_dvertexes + g_dedges[-e].v[1];
-			GetPhongNormal( facenum, vert->point, phongNormal );
+
+			vec3_t temp_point;
+			VectorAdd( vert->point, g_face_offset[facenum], temp_point );
+			GetPhongNormal( facenum, temp_point, phongNormal );
+			
 			g_vertnormals[f->firstedge+i] = StoreNormal( phongNormal );
 		}
 
