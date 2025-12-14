@@ -648,7 +648,7 @@ static void LinkEdict( entity_t *ent, modtype_t modtype, const char *modname, in
 	}
 
 	// don't link into world if shadow was disabled
-	if(( ent->modtype == mod_studio || ent->modtype == mod_alias ) && !FBitSet( flags, FMESH_CAST_SHADOW ))
+	if(( ent->modtype == mod_studio || ent->modtype == mod_alias ) && !FBitSet( flags, FMESH_CAST_SHADOW ) && !FBitSet( flags, FMESH_SELF_SHADOW ))
 		return;
 
 #ifdef HLRAD_RAYTRACE
@@ -1059,8 +1059,23 @@ loc0:
 
 		touch = ENTITY_FROM_AREA( l );
 
-		if( touch == clip->ignore )
-			continue;
+		//hack for self shadowing without casting shadows
+		if( touch->modtype == mod_studio || touch->modtype == mod_alias )
+		{
+			tmesh_t	*mesh = (tmesh_t *)touch->cache;
+
+			if( touch == clip->ignore )
+			{
+				if( !FBitSet( mesh->flags, FMESH_SELF_SHADOW ) )
+					continue;
+			}
+			else
+				if( !FBitSet( mesh->flags, FMESH_CAST_SHADOW ) )
+					continue;			
+		}
+		else
+			if( touch == clip->ignore )
+				continue;
 
 		if( !BoundsIntersect( clip->boxmins, clip->boxmaxs, touch->absmin, touch->absmax ))
 			continue;
@@ -1208,68 +1223,14 @@ void BuildDiffuseNormals( void )
 			g_skynormals[skylevel][i][1] = sin(theta) * sin(phi);
 			g_skynormals[skylevel][i][2] = cos(phi);
 		}
-	}
-
-	//sorted skynormals for incremental uniform sampling in every pass
-	if( g_numstudiobounce == 0 )	//no bounces, only sky lighting
-	{
-		numpoints = STUDIO_SAMPLES_SKY;	
-		g_numstudioskynormals = STUDIO_SAMPLES_SKY;
-	}
-	else
-	{
-		numpoints = g_numstudiobounce * STUDIO_SAMPLES_PER_PASS;
-		g_numstudioskynormals = STUDIO_SAMPLES_PER_PASS;
-	}
-	g_studioskynormals = (vec3_t *)Mem_Alloc( numpoints * sizeof( vec3_t ));
-	for( int i = 0; i < numpoints; i++ )
-	{
-		vec_t theta = 2.0f * M_PI * (float)i / goldenRatio;
-		vec_t phi = AcosFast(1.0f - 2.0f * ((float)i + 0.5f) / (float)numpoints);
-
-		g_studioskynormals[i][0] = cos(theta) * sin(phi);
-		g_studioskynormals[i][1] = sin(theta) * sin(phi);
-		g_studioskynormals[i][2] = cos(phi);
 	}	
-	//sorting	
-	for( int i = 1; i < numpoints-1; i++ )
-	{
-		vec_t best_dot = 1.0f;
-		int best_j = i;
-		
-		for( int j = i; j < numpoints; j++ )
-		{
-			vec_t cur_dot = -1.0f;
-			for( int k = 0; k < i; k++ )
-			{
-				cur_dot = Q_max( cur_dot, DotProduct(g_studioskynormals[k], g_studioskynormals[j]) );
-				if( cur_dot >= best_dot )
-					break;
-			}
-
-			if( cur_dot < best_dot )
-			{
-				best_dot = cur_dot;
-				best_j = j;
-			}
-		}
-
-		if( best_j != i )
-		{
-			vec3_t temp_vec;
-			VectorCopy( g_studioskynormals[i], temp_vec );
-			VectorCopy( g_studioskynormals[best_j], g_studioskynormals[i] );
-			VectorCopy( temp_vec, g_studioskynormals[best_j] );
-		}
-	}
 }
 
 void FreeDiffuseNormals( void )
 {
-	for( int i = 0; i < SKYLEVELMAX + 1; i++ )
+	for( int i = 0; i <= SKYLEVELMAX; i++ )
 	{
 		Mem_Free( g_skynormals[i] );
 		g_skynormals[i] = NULL;
 	}
-	Mem_Free( g_studioskynormals );
 }

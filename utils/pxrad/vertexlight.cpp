@@ -192,8 +192,7 @@ void BuildVertexLights( int indexnum, int thread = -1 )
 	if( !mesh->verts || mesh->numverts <= 0 )
 		return; 
 
-	if( !FBitSet( mesh->flags, FMESH_SELF_SHADOW ))
-		ignoreent = mapent;
+	ignoreent = mapent;
 
 	GetStylesFromMesh( styles, mesh );
 
@@ -214,8 +213,7 @@ void BuildVertexLights( int indexnum, int thread = -1 )
 	NudgeVertexPosition( tv->light->pos ); // nudged vertexes will be used on indirect lighting too
 	VectorCopy( tv->normal, normal );
 
-	// calculate visibility for the sample
-	int	leaf = PointInLeaf( tv->light->pos ) - g_dleafs;
+
 
 	// two-sided verts pos will be adjusted later
 	if( tv->twosided )
@@ -224,7 +222,39 @@ void BuildVertexLights( int indexnum, int thread = -1 )
 	{
 		VectorMA( tv->light->pos, DEFAULT_HUNT_OFFSET, tv->normal, point );
 		VectorCopy( point, tv->light->pos );
+
+		//check overlapping by back faces
+		if( FBitSet( mesh->flags, FMESH_SELF_SHADOW )&&( !g_studiolegacy ) )
+		{
+			vec3_t	trace_end;
+			vec3_t	trace_dir;
+			trace_t	trace;		
+
+			VectorSubtract( point, tv->point, trace_dir );
+			VectorAdd( trace_dir, tv->normal, trace_dir );
+			VectorNormalize2( trace_dir );
+
+			VectorMA( point, 8.0f, trace_dir, trace_end );
+
+			for( int i = 0; i < 8; i++ )
+			{
+				trace.contents = CONTENTS_EMPTY;
+				mesh->rayBVH.TraceRay( point, trace_end, &trace, false );
+				if( (trace.contents == CONTENTS_SOLID)&&(trace.surface == -1) )
+				{	
+					VectorLerp( point, trace.fraction, trace_end, point );
+					VectorMA( point, DEFAULT_HUNT_OFFSET, trace_dir, point );
+				}
+				else
+					break;
+			}		
+
+			VectorCopy( point, tv->light->pos );
+		}
 	}
+	
+	// calculate visibility for the sample
+	int	leaf = PointInLeaf( tv->light->pos ) - g_dleafs;
 
 	memset( light, 0, sizeof( light ));
 	memset( delux, 0, sizeof( delux ));
@@ -232,9 +262,9 @@ void BuildVertexLights( int indexnum, int thread = -1 )
 
 	// gather direct lighting for our vertex
 	if( tv->twosided )
-		GatherSampleLight( thread, -2, point, leaf, normal, light, delux, shadow, styles, vislight, 0, ignoreent );
+		GatherSampleLight( thread, -2, &point, leaf, normal, light, delux, shadow, styles, vislight, 0, ignoreent );
 	else
-		GatherSampleLight( thread, -1, point, leaf, normal, light, delux, shadow, styles, vislight, 0, ignoreent );
+		GatherSampleLight( thread, -1, &point, leaf, normal, light, delux, shadow, styles, vislight, 0, ignoreent );
 
 	// add an ambient term if desired
 	if( g_ambient[0] || g_ambient[1] || g_ambient[2] )
@@ -289,7 +319,8 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 {
 	int	modelnum = g_vertexlight_indexes[indexnum].modelnum;
 	int	vertexnum = g_vertexlight_indexes[indexnum].vertexnum;
-	vec3_t	*skynormals = &g_studioskynormals[g_numstudioskynormals * (g_studiogipasscounter - 1)];
+	vec3_t	*skynormals = &g_skynormals_random[STUDIO_SAMPLES_PER_PASS * (g_studiogipasscounter - 1)];
+	int		skynormalscount = (g_numstudiobounce > 0) ? STUDIO_SAMPLES_PER_PASS : STUDIO_SAMPLES_SKY;
 	entity_t	*mapent = g_vertexlight[modelnum];
 	entity_t	*ignoreent = NULL;	
 	vec3_t	sampled_light[MAXLIGHTMAPS];
@@ -313,8 +344,7 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 	if( !mesh->verts || mesh->numverts <= 0 )
 		return; 
 
-	if( !FBitSet( mesh->flags, FMESH_SELF_SHADOW ))
-		ignoreent = mapent;		
+	ignoreent = mapent;		
 
 	GetStylesFromMesh( newstyles, mesh );
 
@@ -327,19 +357,19 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 	memset( sampled_dir, 0, sizeof( sampled_dir ));
 	total = 0;
 
-	for( int j = 0; j < g_numstudioskynormals; j++ )
+	for( int j = 0; j < skynormalscount; j++, skynormals++ )
 	{
-		dot = DotProduct( skynormals[j], tv->normal );
+		dot = DotProduct( *skynormals, tv->normal );
 
 		if( tv->twosided )
 			dot = 1.0f;
 
 		if( dot <= NORMAL_EPSILON ) continue;
 
-		VectorScale( skynormals[j], MAX_INDIRECT_DIST, delta );
+		VectorScale( *skynormals, MAX_INDIRECT_DIST, delta );
 		VectorAdd( tv->light->pos, delta, delta );
 
-		VectorMA( tv->light->pos, 0.5f, skynormals[j],  trace_pos );
+		VectorMA( tv->light->pos, 0.5f, *skynormals,  trace_pos );
 
 		if( !tv->twosided )
 		{		
@@ -363,13 +393,13 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 			else if( newstyles[lightstyles] == 255 )
 				newstyles[lightstyles] = g_skystyle;
 
-			GetSkyColor( skynormals[j], temp_color );
+			GetSkyColor( *skynormals, temp_color );
 
 			VectorScale( temp_color, dot * g_indirect_sun, temp_color );				
 
 			VectorAdd( sampled_light[lightstyles], temp_color, sampled_light[lightstyles] ); 
 			avg = VectorAvg(temp_color);
-			VectorMA( sampled_dir[lightstyles], avg, skynormals[j], sampled_dir[lightstyles]);
+			VectorMA( sampled_dir[lightstyles], avg, *skynormals, sampled_dir[lightstyles]);
 		}
 		else if( trace.surface == -1 )
 			continue;
@@ -389,7 +419,7 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 
 				VectorAdd( sampled_light[lightstyles], temp_color, sampled_light[lightstyles] ); 
 				avg = VectorAvg(temp_color);
-				VectorMA( sampled_dir[lightstyles], avg, skynormals[j], sampled_dir[lightstyles]);	
+				VectorMA( sampled_dir[lightstyles], avg, *skynormals, sampled_dir[lightstyles]);	
 			}
 		}
 		else if( g_numbounce > 0 )
@@ -410,7 +440,7 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 
 			if( scaleAvg <= 0.0f )
 				continue;
-			scaleAvg = 4.0f * M_PI / ((float)g_numstudioskynormals * scaleAvg);	//ratio of ray cone and face solid angles
+			scaleAvg = 4.0f * M_PI / ((float)skynormalscount * scaleAvg);	//ratio of ray cone and face solid angles
 			scaleAvg = bound( 0.0f, scaleAvg, 1.0f );
 
 			for (int i = 0; i < MAXLIGHTMAPS; i++ )
@@ -429,7 +459,7 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 
 				VectorAdd( sampled_light[lightstyles], temp_color, sampled_light[lightstyles] ); 
 				avg = VectorAvg(temp_color);
-				VectorMA( sampled_dir[lightstyles], avg, skynormals[j], sampled_dir[lightstyles]);	
+				VectorMA( sampled_dir[lightstyles], avg, *skynormals, sampled_dir[lightstyles]);	
 			}
 		}
 		
@@ -445,8 +475,8 @@ void VertexPatchLights( int indexnum, int threadnum = -1 )
 	// add light to vertex
 	for( int k = 0; k < MAXLIGHTMAPS && mesh->styles[k] != 255; k++ )
 	{
-		VectorScale( sampled_light[k], 4.0f / (float)g_numstudioskynormals, sampled_light[k] );
-		VectorScale( sampled_dir[k], 4.0f / (float)g_numstudioskynormals, sampled_dir[k] );
+		VectorScale( sampled_light[k], 4.0f / (float)skynormalscount, sampled_light[k] );
+		VectorScale( sampled_dir[k], 4.0f / (float)skynormalscount, sampled_dir[k] );
 
 		VectorLerp( tv->light->gi[k], 1.0f / (float)g_studiogipasscounter, sampled_light[k], tv->light->gi[k] );
 		VectorLerp( tv->light->gi_dlx[k], 1.0f / (float)g_studiogipasscounter, sampled_dir[k], tv->light->gi_dlx[k]);
@@ -522,6 +552,7 @@ void FinalLightVertex( int modelnum, int threadnum = -1 )
 	vec3_t		lb, v, direction;
 	int			lightstyles;
 	vec_t		minlight;
+	bool		vertexblur;
 	tmesh_t		*mesh;
 	dmodelvertlight_t	*dml;
 	dvlightlump_t	*l;
@@ -559,8 +590,10 @@ void FinalLightVertex( int modelnum, int threadnum = -1 )
 		minlight *= g_direct_scale;
 	if( g_numbounce > 0 ) minlight = 0.0f; // ignore for radiosity
 
+	vertexblur = BoolForKey( mapent, "zhlt_vertexblur" );
+	vertexblur = vertexblur || g_vertexblur;
 
-	if( g_vertexblur )
+	if( vertexblur )
 	{
 		for( int i = 0; i < mesh->numverts; i++ )
 			mesh->verts[i].light->face_counter = 0;

@@ -74,14 +74,16 @@ bool		g_studiolegacy = false;
 vec_t		g_scale = DEFAULT_GLOBAL_SCALE;
 rgbdata_t	*g_skytextures[6];
 vec_t		g_lightprobeepsilon = DEFAULT_LIGHTPROBE_EPSILON;
-int			g_lightprobelevel = 4;
+int			g_lightprobesamples = 256;
 bool		g_vertexblur = false;
 uint		g_numstudiobounce = DEFAULT_STUDIO_BOUNCE;
-int		g_studiogipasscounter = 0;
-vec3_t		*g_studioskynormals;
-int		g_numstudioskynormals;
+int			g_studiogipasscounter = 0;
 bool		g_noemissive = false;
-int		g_skystyle = -1;
+int			g_skystyle = -1;
+bool		g_perpixelsky = false;
+bool		g_usingpatches = true;
+bool		g_patchaa = false;
+
 
 
 bool		g_drawsample = false;
@@ -106,6 +108,11 @@ static char	level_lights[MAX_PATH] = "";
 vec_t g_anorms[NUMVERTEXNORMALS][3] =
 {
 #include "anorms.h"
+};
+
+vec3_t	g_skynormals_random[SKYNORMALS_RANDOM] =
+{
+#include "anorms_rnd_16k.h"
 };
 
 /*
@@ -1264,16 +1271,55 @@ static bool PlacePatchInside( patch_t *patch )
 	patch->exposure = pointsfound / pointstested;
 
 	if( found )
-	{
 		VectorCopy( bestpoint, patch->origin );
-		return true;
-	}
 	else
 	{
 		VectorMA( center, offset, plane->normal, patch->origin );
 		SetBits( patch->flags, PATCH_OUTSIDE );
-		return false;
 	}
+
+	//multiple trace origins for patch antialising
+	const vec3_t	*a, *b, *c;	//triangle vertices	
+	vec_t	sample_area = patch->area / (float)PATCH_MAX_TRACE_ORIGINS;
+	vec_t	area_counter = 0.0f;
+	int		counter = 1;
+	vec3_t	*trace_origin = &patch->trace_origins[counter];
+	
+	WindingCenter( patch->winding, center );
+	VectorCopy( patch->origin, patch->trace_origins[0]);
+
+	a = &center;
+
+	for( int j = 0; j < patch->winding->numpoints; j++ )
+	{
+		b = &patch->winding->p[j];
+		c = &patch->winding->p[(j + 1) % patch->winding->numpoints];
+
+		area_counter += TriangleArea( *a, *b, *c );
+		while( ((counter * sample_area) < area_counter) && ( counter < PATCH_MAX_TRACE_ORIGINS ) )
+		{
+			vec_t	sqrt_r1, r2;
+			sqrt_r1 = sqrtf( Halton( 2, counter ) );
+			r2 = Halton( 3, counter );
+
+			VectorClear( *trace_origin );
+			VectorMA( *trace_origin, 1.0f - sqrt_r1, *a, *trace_origin );
+			VectorMA( *trace_origin, sqrt_r1 * ( 1.0f - r2 ), *b, *trace_origin );
+			VectorMA( *trace_origin, sqrt_r1 * r2, *c, *trace_origin );
+
+			VectorMA( patch->trace_origins[counter], 0.5f, plane->normal, *trace_origin );
+		
+			dleaf_t	*leaf;
+			leaf = PointInLeaf2( *trace_origin );
+			if(( leaf->contents == CONTENTS_SKY ) || ( leaf->contents == CONTENTS_SOLID ))
+				VectorCopy( patch->origin, *trace_origin );
+
+			counter++;
+			trace_origin++;
+		}
+	}
+
+	return found;
 }
 
 // =====================================================================================
@@ -1913,8 +1959,7 @@ static void SortPatches( void )
 		}
 	}
 
-	// if we haven't patches we don't need bounces
-	if( g_num_patches <= 0 ) g_numbounce = 0;
+	if( g_num_patches <= 0 ) g_usingpatches = false;
 }
 
 /*
@@ -2076,6 +2121,7 @@ static void MakeTransfers( int threadnum )
 	transfer_data_t	*tData;
 	vec3_t		delta;
 	vec_t		trans_sum;
+	byte		*patch_shadowing = (byte *)Mem_Alloc( g_num_patches + 1 );
 
 	while( 1 )
 	{
@@ -2150,8 +2196,23 @@ static void MakeTransfers( int threadnum )
 			if( DotProduct( origin1, plane2->normal ) <= PatchPlaneDist( patch2 ) + MINIMUM_PATCH_DISTANCE )
 				continue;
 
-			if( TestLine( threadnum, origin1, origin2, false ) != CONTENTS_EMPTY )
-				continue;
+			if( g_patchaa )
+			{
+				byte shadowing = 0;
+				for( int k = 0; k < PATCH_MAX_TRACE_ORIGINS; k++ )
+					if( TestLine( threadnum, patch1->trace_origins[k], origin2, false ) == CONTENTS_EMPTY )
+						shadowing++;
+				if( shadowing == 0 )
+					continue;			
+				patch_shadowing[count] = shadowing;
+			}
+			else
+			{
+				VectorCopy( patch1->trace_origins[j % PATCH_MAX_TRACE_ORIGINS], origin1 );
+
+				if( TestLine( threadnum, origin1, origin2, false ) != CONTENTS_EMPTY )
+					continue;
+			}
 
 			vispatches[count] = patch2;
 			count++;
@@ -2237,6 +2298,8 @@ static void MakeTransfers( int threadnum )
 				trans *= patch2->area;
 			}
 
+			if( g_patchaa )
+				trans *= (float)patch_shadowing[j] / (float)PATCH_MAX_TRACE_ORIGINS;
 			trans_sum += trans;
 
 			// scale to 16 bit (black magic)
@@ -2282,6 +2345,7 @@ static void MakeTransfers( int threadnum )
 	Mem_Free( vispatches );
 	Mem_Free( tIndex_All );
 	Mem_Free( tData_All );
+	Mem_Free( patch_shadowing );	//nc add
 }
 
 /*
@@ -2511,8 +2575,6 @@ void RadWorld( void )
 	RunThreadsOnIndividual( g_numfaces, true, FindFacePositions );
 	CalcPositionsSize();
 
-	if( g_fastsky )
-		MakeTransfers();
 	if( g_envsky )
 		LoadEnvSkyTextures();
 
@@ -2524,7 +2586,7 @@ void RadWorld( void )
 #ifdef HLRAD_VERTEXLIGHTING
 	BuildVertexLights();	//BuildFaceLights will get single gi bounce from studiomodels
 
-	if( g_numstudiobounce > 0 || g_indirect_sun > 0.0f )
+	if( g_numstudiobounce > 0 )
 	{
 		g_studiogipasscounter = 1;		
 		VertexPatchLights();
@@ -2541,11 +2603,10 @@ void RadWorld( void )
 
 	CalcLuxelsCount();
 
-	if( g_numbounce > 0 )
+	if( g_numbounce > 0 && g_usingpatches )
 	{
 		// build transfer lists	
-		if(!g_fastsky)
-			MakeTransfers();
+		MakeTransfers();
 
 		emitlight = (vec3_t (*)[MAXLIGHTMAPS])Mem_Alloc(( g_num_patches + 1 ) * sizeof( vec3_t[MAXLIGHTMAPS] ));
 		addlight = (vec3_t (*)[MAXLIGHTMAPS])Mem_Alloc(( g_num_patches + 1 ) * sizeof( vec3_t[MAXLIGHTMAPS] ));
@@ -2569,10 +2630,9 @@ void RadWorld( void )
 		emitlight_dir = NULL;
 		addlight_dir = NULL;
 #endif
-	}
-
-	if( g_fastsky ||( g_numbounce > 0 ))
+		// transfers don't need anymore
 		FreeTransfers();
+	}
 
 	// remove direct light from patches
 	for( int i = 0; i < g_num_patches; i++ )
@@ -2592,13 +2652,13 @@ void RadWorld( void )
 		ScaleDirectLights();
 
 	// because fastmode uses patches instead of samples
-	if( g_numbounce > 0 || g_fastmode || g_indirect_sun > 0.0f )
+	if( g_usingpatches )
 		RunThreadsOnIndividual( g_numfaces, false, CreateTriangulations );
 
 	// blend bounced light into direct light and save
 	PrecompLightmapOffsets();
 
-	if( g_numbounce > 0 || g_fastmode || g_indirect_sun > 0.0f )
+	if( g_usingpatches )
 	{
 		CreateFacelightDependencyList();
 
@@ -2607,7 +2667,7 @@ void RadWorld( void )
 		FreeFacelightDependencyList();
 	}
 
-	if( g_numbounce > 0 || g_fastmode || g_indirect_sun > 0.0f )
+	if( g_usingpatches )
 		FreeTriangulations();
 
 	if( g_lightbalance )
@@ -2621,7 +2681,7 @@ void RadWorld( void )
 
 #ifdef HLRAD_VERTEXLIGHTING
 	g_studiogipasscounter = 0;
-	for( int i = 0; i < g_numstudiobounce; i++ )
+	for( int i = 0; i < Q_max( 1, g_numstudiobounce ); i++ )
 	{
 		g_studiogipasscounter++;		
 		VertexPatchLights();
@@ -2758,11 +2818,13 @@ static void PrintRadUsage( void )
 	Msg( "    -worldspace    : deluxe map in world space, not tangent space\n" );
 	Msg( "    -studiolegacy  : use legacy tree for studio models tracing instead of BVH\n" );
 	Msg( "    -lightprobeepsilon #.#: set light probe importance threshold value. default is %f\n", DEFAULT_LIGHTPROBE_EPSILON );
-	Msg( "    -lightprobelevel #: set number of rays for light probes baking, final number is 4^n. default is 4\n" );	
+	Msg( "    -lightprobesamples #: set number of rays for light probes baking. default is 256\n" );
 	Msg( "    -studiobounce #: set number of studio model radiosity bounces. default is %d\n", DEFAULT_STUDIO_BOUNCE );
 	Msg( "    -vertexblur    : blur per-vertex lighting\n" );	
 	Msg( "    -noemissive    : do not add emissive textures to the lightmap\n" );
-	Msg( "    -skystyle #    : set lightstyle for sky lighting. default is %d\n", LS_NORMAL );	
+	Msg( "    -skystyle #    : set lightstyle for sky lighting. default is %d\n", LS_NORMAL );
+	Msg( "    -perpixelsky   : per pixel calculation of sky lighting\n" );
+	Msg( "    -patchaa       : use multiple samples for patch visibility\n" );
 
 #ifdef HLRAD_PARANOIA_BUMP
 	Msg( "    -gammamode #   : gamma correction mode (0, 1, 2)\n" );
@@ -2915,9 +2977,9 @@ int main( int argc, char **argv )
 			g_lightprobeepsilon = (float)atof( argv[i+1] );
 			i++;
 		}
-		else if( !Q_strcmp( argv[i], "-lightprobelevel" ))
+		else if( !Q_strcmp( argv[i], "-lightprobesamples" ))
 		{
-			g_lightprobelevel = atoi( argv[i+1] );
+			g_lightprobesamples = atoi( argv[i+1] );
 			i++;
 		}			
 		else if( !Q_strcmp( argv[i], "-studiobounce" ))
@@ -2937,7 +2999,15 @@ int main( int argc, char **argv )
 		{
 			g_skystyle = atoi( argv[i+1] );
 			i++;
-		}			
+		}		
+		else if( !Q_strcmp( argv[i], "-perpixelsky" ))
+		{
+			g_perpixelsky = true;
+		}
+		else if( !Q_strcmp( argv[i], "-patchaa" ))
+		{
+			g_patchaa = true;
+		}
 		else if( !Q_strcmp( argv[i], "-chop" ))
 		{
 			g_chop = (float)atof( argv[i+1] );
@@ -3080,12 +3150,13 @@ int main( int argc, char **argv )
 
 	if( g_skystyle < 0 )
 		g_skystyle = IntForKey( &g_entities[0], "zhlt_skystyle" );
+	g_usingpatches = g_numbounce > 0 || g_fastmode || g_indirect_sun > 0.0f;
 
 	// keep it in acceptable range
 	g_blur = bound( 1.0, g_blur, 8.0 );
 	g_gamma = bound( 0.3, g_gamma, 1.0 );
 	g_skystyle = bound( 0, g_skystyle, 254 );
-	g_lightprobelevel = bound( 1, g_lightprobelevel, SKYLEVELMAX );
+	g_lightprobesamples = bound( 1, g_lightprobesamples, SKYNORMALS_RANDOM );
 
 	RadWorld ();
 

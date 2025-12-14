@@ -24,7 +24,7 @@ GNU General Public License for more details.
 #include "r_studioint.h"
 #include "gl_framebuffer.h"
 #include "gl_cubemap.h"
-#include "gl_frustum.h"
+#include "frustum.h"
 #include "gl_viewport.h"
 #include "gl_primitive.h"
 #include "gl_shader.h"
@@ -64,7 +64,6 @@ GNU General Public License for more details.
 #define LIGHT_SAMPLES			8			// GPU limitation for local arrays (very slowly if more than eight elements)
 #define MOD_FRAMES				20
 
-#define WATER_TEXTURES	29
 #define WATER_ANIMTIME	20.0f
 
 // should match with engine, used for XashXT studio cache system
@@ -512,7 +511,7 @@ typedef struct
 	gl_texbuffer_t	subviewTextures[MAX_SUBVIEW_TEXTURES];
 	TextureHandle		shadowTextures[MAX_SHADOWS];
 	TextureHandle		shadowCubemaps[MAX_SHADOWS];
-	TextureHandle		waterTextures[WATER_TEXTURES];
+	CUtlArray<TextureHandle>	waterTextures;
 	int		num_2D_shadows_used;	// used shadow textures per full frame
 	int		num_CM_shadows_used;	// used shadow textures per full frame
 	int		num_subview_used;		// used mirror textures per full frame
