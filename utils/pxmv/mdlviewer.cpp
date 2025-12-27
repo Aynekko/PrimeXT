@@ -26,6 +26,7 @@
 #include <array>
 #include <algorithm>
 #include <utility>
+#include <ctime>
 
 #include "mdlviewer.h"
 #include "GlWindow.h"
@@ -598,12 +599,14 @@ MDLViewer::handleEvent (mxEvent *event)
 
 		case IDC_OPTIONS_MAKESCREENSHOT:
 		{
-			char *ptr = (char *)mxGetSaveFileName( this, "", "Windows Bitmap (*.bmp)" );
-			if( ptr )
+			std::array<char, 128> nameBuffer;
+			std::time_t currentTime = std::time(nullptr);
+			std::strftime(nameBuffer.data(), nameBuffer.size(), "pxmv_%F_%H-%M-%S.png", std::gmtime(&currentTime));
+			const char *fileName = (char *)mxGetSaveFileName( this, nameBuffer.data(), "Any supported format (*.bmp; *.tga; *.dds; *.png)");
+
+			if (fileName)
 			{
-				if( !strstr( ptr, ".bmp" ))
-					strcat( ptr, ".bmp" );
-				d_GlWindow->dumpViewport( ptr );
+				d_GlWindow->dumpViewport(fileName);
 			}
 		}
 		break;

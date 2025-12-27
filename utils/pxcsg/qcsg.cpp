@@ -804,7 +804,6 @@ int main( int argc, char **argv )
 
 	// starting base filesystem
 	FS_Init( source );
-	LoadShaderInfo();
 
 	if( g_onlyents )
 	{
@@ -848,7 +847,6 @@ int main( int argc, char **argv )
 	TEX_FreeTextures();
 	FreeHullFaces();
 	FreeMapEntities();
-	FreeShaderInfo();
 	FS_Shutdown();
 	CrashHandler::Restore();
 
