@@ -591,7 +591,7 @@ vec_t CalcFaceSolidAngle( dface_t *f, const vec3_t origin )
 // =====================================================================================
 //  CalcSightArea
 // =====================================================================================
-vec_t CalcSightArea( const vec3_t receiver_origin, const vec3_t receiver_normal, const winding_t *emitter_winding, int skylevel )
+vec_t CalcSightArea( const vec3_t receiver_origin, const vec3_t receiver_normal, const winding_t *emitter_winding, int skylevel, vec3_t* avg_direction )
 {
 	// maybe there are faster ways in calculating the weighted area, but at least this way is not bad.
 	int	numedges = emitter_winding->numpoints;
@@ -600,6 +600,7 @@ vec_t CalcSightArea( const vec3_t receiver_origin, const vec3_t receiver_normal,
 	vec_t	dot;
 	vec_t	area = 0.0f;
 	int	i, j, x;
+	vec3_t	avg_dir = {0,0,0};
 
 	for( x = 0; x < numedges; x++ )
 	{
@@ -634,11 +635,20 @@ vec_t CalcSightArea( const vec3_t receiver_origin, const vec3_t receiver_normal,
 		if( j < numedges )
 			continue;
 		area += dot;
+
+		VectorMA( avg_dir, dot, *pnormal, avg_dir );
+	}
+
+	if( avg_direction )
+	{
+		if( area > 0.0f )
+			VectorScale( avg_dir, 1.0f / area, avg_dir );	
+		VectorCopy( avg_dir, *avg_direction ); 			
 	}
 
 	area /= (float)i;
 
-	area = area * 4.0 * M_PI; // convert to absolute sphere area
+	area = area * 4.0f * M_PI; // convert to absolute sphere area
 	Mem_Free( edges );
 
 	return area;
@@ -2583,14 +2593,17 @@ void RadWorld( void )
 #endif
 
 #ifdef HLRAD_VERTEXLIGHTING
-	BuildVertexLights();	//BuildFaceLights will get single gi bounce from studiomodels
+	Msg( "\n" );	
+	VertexDirectLighting();	//BuildFaceLights will get single gi bounce from studiomodels
 
 	if( g_numstudiobounce > 0 )
 	{
-		g_studiogipasscounter = 1;		
-		VertexPatchLights();
-		VertexBlendGI();
+		g_studiogipasscounter = 1;
+		Msg( "VertexIndirectLighting Prepass\n" );
+		VertexIndirectGather();
+		VertexIndirectBlend();
 	}
+	Msg( "\n" );
 #endif
 
 
@@ -2679,15 +2692,19 @@ void RadWorld( void )
 
 
 #ifdef HLRAD_VERTEXLIGHTING
+	Msg( "\n" );
 	g_studiogipasscounter = 0;
 	for( int i = 0; i < Q_max( 1, g_numstudiobounce ); i++ )
 	{
-		g_studiogipasscounter++;		
-		VertexPatchLights();
-		VertexBlendGI();
+		g_studiogipasscounter++;
+		Msg( "VertexIndirectLighting Pass %d/%d\n", g_studiogipasscounter, g_numstudiobounce );
+		VertexIndirectGather();
+		VertexIndirectBlend();
+		Msg( "\n" );
 	}
 	
 	FinalLightVertex();
+	Msg( "\n" );
 #endif
 
 #ifdef HLRAD_AMBIENTCUBES
