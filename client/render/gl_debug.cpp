@@ -22,6 +22,8 @@
 #include "vertex_fmt.h"
 #include "gl_cvars.h"
 #include "mathlib.h"
+#include "visualizer/debug_visualizer.h"
+#include "gl_debug_overlay_2d.h"
 
 void GL_GpuMemUsage_f( void )
 {
@@ -101,67 +103,60 @@ void DBG_PrintVertexVBOSizes( void )
 	ALERT( at_console, "sizeof( svert_v8_gl30_t ) == %d bytes\n", sizeof( svert_v8_gl30_t ));
 }
 
-// some simple helpers to draw a cube in the special way the ambient visualization wants
-static float *CubeSide( const vec3_t pos, float size, int vert )
+// Build the 8 corners of an axis-aligned cube centered at `pos` with the given
+// half-size `rad`. Uses the engine's HL corner convention: bit 0 set = -X, bit 1 = -Y, bit 2 = -Z.
+static void CubeCorners( const Vector &pos, float rad, std::array<Vector, 8> &out )
 {
-	static vec3_t	side;
-
-	VectorCopy( pos, side );
-	side[0] += (vert & 1) ? -size : size;
-	side[1] += (vert & 2) ? -size : size;
-	side[2] += (vert & 4) ? -size : size;
-
-	return side;
+	for (int i = 0; i < 8; i++) {
+		out[i].x = pos.x + ((i & 1) ? -rad : rad);
+		out[i].y = pos.y + ((i & 2) ? -rad : rad);
+		out[i].z = pos.z + ((i & 4) ? -rad : rad);
+	}
 }
 
-static void CubeFace( const vec3_t org, int v0, int v1, int v2, int v3, float size, const byte *color )
-{
-	vec3_t col;
-	float scale = tr.lightstyle[0] / 264.0f;
-	float gamma = 1.0f / tr.light_gamma;
-
-	col[0] = powf( color[0] / 255.0f, gamma ) * scale;
-	col[1] = powf( color[1] / 255.0f, gamma ) * scale;
-	col[2] = powf( color[2] / 255.0f, gamma ) * scale;
-
-	pglColor3fv( col );
-	pglVertex3fv( CubeSide( org, size, v0 ));
-	pglVertex3fv( CubeSide( org, size, v1 ));
-	pglVertex3fv( CubeSide( org, size, v2 ));
-	pglVertex3fv( CubeSide( org, size, v3 ));
-}
-		
 void R_RenderLightProbe( mlightprobe_t *probe )
 {
-	float	rad = 4.0f;
+	const float rad = 4.0f;
+	const float scale = tr.lightstyle[0] / 264.0f;
+	const float gamma = 1.0f / tr.light_gamma;
 
-	pglBegin( GL_QUADS );
+	auto toLinear = [&]( const byte *c ) {
+		return Vector(
+			powf( c[0] / 255.0f, gamma ) * scale,
+			powf( c[1] / 255.0f, gamma ) * scale,
+			powf( c[2] / 255.0f, gamma ) * scale );
+	};
 
-	CubeFace( probe->origin, 4, 6, 2, 0, rad, probe->cube.color[0] );
-	CubeFace( probe->origin, 7, 5, 1, 3, rad, probe->cube.color[1] );
-	CubeFace( probe->origin, 0, 1, 5, 4, rad, probe->cube.color[2] );
-	CubeFace( probe->origin, 3, 2, 6, 7, rad, probe->cube.color[3] );
-	CubeFace( probe->origin, 2, 3, 1, 0, rad, probe->cube.color[4] );
-	CubeFace( probe->origin, 4, 5, 7, 6, rad, probe->cube.color[5] );
+	// probe->cube.color is indexed +X, -X, +Y, -Y, +Z, -Z;
+	// g_boxpnt (backend face order) is +X, +Y, +Z, -X, -Y, -Z.
+	std::array<Vector, 6> faceColors = {
+		toLinear( probe->cube.color[0] ), // +X
+		toLinear( probe->cube.color[2] ), // +Y
+		toLinear( probe->cube.color[4] ), // +Z
+		toLinear( probe->cube.color[1] ), // -X
+		toLinear( probe->cube.color[3] ), // -Y
+		toLinear( probe->cube.color[5] ), // -Z
+	};
 
-	pglEnd ();
+	std::array<Vector, 8> corners;
+	CubeCorners( probe->origin, rad, corners );
+
+	CDebugVisualizer::GetInstance().DrawFilledBox( corners, faceColors, 1.0f, std::nullopt, true );
 }
 
 void R_RenderCubemap( mcubemap_t *cube )
 {
-	float	rad = (float)cube->size * 0.1f;
-	byte	color[3] = { 127, 127, 127 };
+	const float rad = (float)cube->size * 0.1f;
+	const float scale = tr.lightstyle[0] / 264.0f;
+	const float gamma = 1.0f / tr.light_gamma;
+	const float gray = powf( 127.0f / 255.0f, gamma ) * scale;
+	const Vector color( gray, gray, gray );
+	const std::array<Vector, 6> faceColors = { color, color, color, color, color, color };
 
-	pglBegin( GL_QUADS );
+	std::array<Vector, 8> corners;
+	CubeCorners( cube->origin, rad, corners );
 
-	CubeFace( cube->origin, 4, 6, 2, 0, rad, color );
-	CubeFace( cube->origin, 7, 5, 1, 3, rad, color );
-	CubeFace( cube->origin, 0, 1, 5, 4, rad, color );
-	CubeFace( cube->origin, 3, 2, 6, 7, rad, color );
-	CubeFace( cube->origin, 2, 3, 1, 0, rad, color );
-	CubeFace( cube->origin, 4, 5, 7, 6, rad, color );
-
-	pglEnd ();
+	CDebugVisualizer::GetInstance().DrawFilledBox( corners, faceColors, 1.0f, std::nullopt, true );
 }
 
 void R_RenderLightProbeInternal( const Vector &origin, const Vector lightCube[] )
@@ -187,56 +182,15 @@ R_DrawAABB
 */
 static void R_DrawAABB( const Vector &absmin, const Vector &absmax, int contents )
 {
-	vec3_t	bbox[8];
-	int	i;
-
-	// compute a full bounding box
-	for( i = 0; i < 8; i++ )
-	{
-  		bbox[i][0] = ( i & 1 ) ? absmin[0] : absmax[0];
-  		bbox[i][1] = ( i & 2 ) ? absmin[1] : absmax[1];
-  		bbox[i][2] = ( i & 4 ) ? absmin[2] : absmax[2];
-	}
-
-	GL_Bind( GL_TEXTURE0, tr.whiteTexture );
-	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
-	pglDisable( GL_DEPTH_TEST );
-
+	Vector color;
 	switch( contents )
 	{
-	case CONTENTS_EMPTY:
-		pglColor4f( 0.5f, 1.0f, 0.0f, 1.0f );	// green for empty
-		break;
-	case CONTENTS_SOLID:
-		pglColor4f( 1.0f, 0.0f, 0.0f, 1.0f );	// red for solid
-		break;
-	case CONTENTS_WATER:
-		pglColor4f( 0.0f, 0.5f, 1.0f, 1.0f );	// blue for water
-		break;
-	default:
-		pglColor4f( 0.5f, 0.5f, 0.5f, 1.0f );	// gray as default
-		break;
+	case CONTENTS_EMPTY: color = Vector( 0.5f, 1.0f, 0.0f ); break; // green for empty
+	case CONTENTS_SOLID: color = Vector( 1.0f, 0.0f, 0.0f ); break; // red for solid
+	case CONTENTS_WATER: color = Vector( 0.0f, 0.5f, 1.0f ); break; // blue for water
+	default:             color = Vector( 0.5f, 0.5f, 0.5f ); break; // gray otherwise
 	}
-	pglBegin( GL_LINES );
-
-	for( i = 0; i < 2; i += 1 )
-	{
-		pglVertex3fv( bbox[i+0] );
-		pglVertex3fv( bbox[i+2] );
-		pglVertex3fv( bbox[i+4] );
-		pglVertex3fv( bbox[i+6] );
-		pglVertex3fv( bbox[i+0] );
-		pglVertex3fv( bbox[i+4] );
-		pglVertex3fv( bbox[i+2] );
-		pglVertex3fv( bbox[i+6] );
-		pglVertex3fv( bbox[i*2+0] );
-		pglVertex3fv( bbox[i*2+1] );
-		pglVertex3fv( bbox[i*2+4] );
-		pglVertex3fv( bbox[i*2+5] );
-	}
-
-	pglEnd();
-	pglEnable( GL_DEPTH_TEST );
+	CDebugVisualizer::GetInstance().DrawAABB( absmin, absmax, color, std::nullopt, false );
 }
 
 /*
@@ -345,137 +299,45 @@ void DrawCubeMaps( void )
 	pglColor3f( 1.0f, 1.0f, 1.0f );
 }
 
-void DBG_DrawBBox( const Vector &mins, const Vector &maxs )
-{
-	Vector bbox[8];
-	int i;
-
-	for( i = 0; i < 8; i++ )
-	{
-  		bbox[i][0] = ( i & 1 ) ? mins[0] : maxs[0];
-  		bbox[i][1] = ( i & 2 ) ? mins[1] : maxs[1];
-  		bbox[i][2] = ( i & 4 ) ? mins[2] : maxs[2];
-	}
-
-	pglColor4f( 1.0f, 0.0f, 1.0f, 1.0f );	// yellow bboxes for frustum
-	GL_Bind( GL_TEXTURE0, tr.whiteTexture );
-	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
-	pglBegin( GL_LINES );
-
-	for( i = 0; i < 2; i += 1 )
-	{
-		pglVertex3fv( bbox[i+0] );
-		pglVertex3fv( bbox[i+2] );
-		pglVertex3fv( bbox[i+4] );
-		pglVertex3fv( bbox[i+6] );
-		pglVertex3fv( bbox[i+0] );
-		pglVertex3fv( bbox[i+4] );
-		pglVertex3fv( bbox[i+2] );
-		pglVertex3fv( bbox[i+6] );
-		pglVertex3fv( bbox[i*2+0] );
-		pglVertex3fv( bbox[i*2+1] );
-		pglVertex3fv( bbox[i*2+4] );
-		pglVertex3fv( bbox[i*2+5] );
-	}
-	pglEnd();
-}
-
 void DBG_DrawLightFrustum( void )
 {
-	if( CVAR_TO_BOOL( r_scissor_light_debug ) && RP_NORMALPASS( ))
+	if( !CVAR_TO_BOOL( r_scissor_light_debug ) || !RP_NORMALPASS( ))
+		return;
+
+	auto &visualizer = CDebugVisualizer::GetInstance();
+	const Vector frustumColor(1.0f, 1.0f, 0.0f);  // yellow
+	const Vector bboxColor(1.0f, 0.0f, 1.0f);     // magenta
+
+	for( int i = 0; i < MAX_DLIGHTS; i++ )
 	{
-		GL_DEBUG_SCOPE();
-		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+		CDynLight *pl = &tr.dlights[i];
+		if( !pl->Active( )) continue;
 
-		for( int i = 0; i < MAX_DLIGHTS; i++ )
+		if( r_scissor_light_debug->value == 1.0f )
 		{
-			CDynLight *pl = &tr.dlights[i];
-
-			if( !pl->Active( )) continue;
-
-			if( r_scissor_light_debug->value == 1.0f )
+			R_DrawScissorRectangle( pl->x, pl->y, pl->w, pl->h );
+		}
+		else if( r_scissor_light_debug->value == 2.0f )
+		{
+			if( pl->type == LIGHT_DIRECTIONAL )
 			{
-				R_DrawScissorRectangle( pl->x, pl->y, pl->w, pl->h );
+				for (int j = 0; j < NUM_SHADOW_SPLITS + 1; j++)
+					visualizer.DrawFrustum(pl->splitFrustum[j], frustumColor, std::nullopt, true);
 			}
-			else if( r_scissor_light_debug->value == 2.0f )
+			else if( pl->type == LIGHT_OMNI )
 			{
-				if( pl->type == LIGHT_DIRECTIONAL )
-				{
-					for (int j = 0; j < NUM_SHADOW_SPLITS + 1; j++)
-						DBG_DrawFrustum( pl->splitFrustum[j] );
-				}
-				else DBG_DrawFrustum( pl->frustum );
+				visualizer.DrawSphere(pl->origin, pl->radius, frustumColor, std::nullopt, true);
 			}
 			else
-			{ 
-				DBG_DrawBBox( pl->absmin, pl->absmax );
+			{
+				visualizer.DrawFrustum(pl->frustum, frustumColor, std::nullopt, true);
 			}
 		}
-	}
-}
-
-void DBG_DrawFrustum(const CFrustum &frustum)
-{
-	Vector bbox[8];
-	frustum.ComputeFrustumCorners( bbox );
-
-	// g-cont. frustum must be yellow :-)
-	pglColor4f( 1.0f, 1.0f, 0.0f, 1.0f );
-	GL_Bind( GL_TEXTURE0, tr.whiteTexture );
-	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
-	pglShadeModel( GL_SMOOTH );
-	pglBegin( GL_LINES );
-
-	for( int i = 0; i < 2; i += 1 )
-	{
-		pglVertex3fv( bbox[i+0] );
-		pglVertex3fv( bbox[i+2] );
-		pglVertex3fv( bbox[i+4] );
-		pglVertex3fv( bbox[i+6] );
-		pglVertex3fv( bbox[i+0] );
-		pglVertex3fv( bbox[i+4] );
-		pglVertex3fv( bbox[i+2] );
-		pglVertex3fv( bbox[i+6] );
-		pglVertex3fv( bbox[i*2+0] );
-		pglVertex3fv( bbox[i*2+1] );
-		pglVertex3fv( bbox[i*2+4] );
-		pglVertex3fv( bbox[i*2+5] );
-	}
-
-	// visualize plane normals 	
-	for (int i = 0; i < FRUSTUM_PLANES; i++)
-	{
-		Vector plane_midpoint;
-		switch (i)
+		else
 		{
-			case FRUSTUM_LEFT:
-				plane_midpoint = (bbox[0] + bbox[2] + bbox[4] + bbox[6]) * 0.25f;
-				break;
-			case FRUSTUM_RIGHT:
-				plane_midpoint = (bbox[1] + bbox[3] + bbox[5] + bbox[7]) * 0.25f;
-				break;
-			case FRUSTUM_BOTTOM:
-				plane_midpoint = (bbox[2] + bbox[3] + bbox[6] + bbox[7]) * 0.25f;
-				break;
-			case FRUSTUM_TOP:
-				plane_midpoint = (bbox[0] + bbox[1] + bbox[4] + bbox[5]) * 0.25f;
-				break;
-			case FRUSTUM_FAR:
-				plane_midpoint = (bbox[0] + bbox[1] + bbox[2] + bbox[3]) * 0.25f;
-				break;
-			case FRUSTUM_NEAR:
-				plane_midpoint = (bbox[4] + bbox[5] + bbox[6] + bbox[7]) * 0.25f;
-				break;
+			visualizer.DrawAABB(pl->absmin, pl->absmax, bboxColor, std::nullopt, true);
 		}
-
-		pglColor4f(0.0f, 1.0f, 0.0f, 1.0f);
-		pglVertex3fv(plane_midpoint);
-		pglColor4f(1.0f, 0.0f, 0.0f, 1.0f);
-		pglVertex3fv(plane_midpoint + frustum.GetPlane(i)->normal * 32.0);
 	}
-
-	pglEnd();
-	pglColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
 }
 
 void DBG_DrawGlassScissors( void )
@@ -503,18 +365,15 @@ Draws vertex tangent spaces for debugging
 */
 void DrawTangentSpaces( void )
 {
-	float	temp[3];
-	float	vecLen = 4.0f;
-
 	if( !CVAR_TO_BOOL( cv_show_tbn ))
 		return;
 
 	GL_DEBUG_SCOPE();
-	GL_Bind( GL_TEXTURE0, tr.whiteTexture );
-	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
-	pglDisable( GL_DEPTH_TEST );
-	GL_Blend( GL_FALSE );
-	pglBegin( GL_LINES );
+	const float vecLen = 4.0f;
+	const Vector tangentColor( 1.0f, 0.0f, 0.0f );
+	const Vector binormalColor( 0.0f, 1.0f, 0.0f );
+	const Vector normalColor( 0.0f, 0.0f, 1.0f );
+	auto &visualizer = CDebugVisualizer::GetInstance();
 
 	for( int i = 0; i < worldmodel->nummodelsurfaces; i++ )
 	{
@@ -528,151 +387,79 @@ void DrawTangentSpaces( void )
 
 		for( int j = 0; j < esrf->numverts; j++, mv++ )
 		{
-			pglColor3f( 1.0f, 0.0f, 0.0f );
-			pglVertex3fv( mv->vertex );
-			VectorMA( mv->vertex, vecLen, Vector( mv->tangent ), temp );
-			pglVertex3fv( temp );
-
-			pglColor3f( 0.0f, 1.0f, 0.0f );
-			pglVertex3fv( mv->vertex );
-			VectorMA( mv->vertex, vecLen, Vector( mv->binormal ), temp );
-			pglVertex3fv( temp );
-
-			pglColor3f( 0.0f, 0.0f, 1.0f );
-			pglVertex3fv( mv->vertex );
-			VectorMA( mv->vertex, vecLen, Vector( mv->normal ), temp );
-			pglVertex3fv( temp );
+			visualizer.DrawVector( mv->vertex, Vector( mv->tangent )  * vecLen, tangentColor,  std::nullopt, false );
+			visualizer.DrawVector( mv->vertex, Vector( mv->binormal ) * vecLen, binormalColor, std::nullopt, false );
+			visualizer.DrawVector( mv->vertex, Vector( mv->normal )   * vecLen, normalColor,   std::nullopt, false );
 		}
 	}
-
-	pglEnd();
-	pglEnable( GL_DEPTH_TEST );
 }
 
 void DrawWireFrame( void )
 {
-	int	i;
-
 	if( !CVAR_TO_BOOL( r_wireframe ))
 		return;
 
 	GL_DEBUG_SCOPE();
-	pglEnable( GL_BLEND );
-	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-	pglPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-	pglColor4f( 1.0f, 1.0f, 1.0f, 0.99f ); 
+	auto &visualizer = CDebugVisualizer::GetInstance();
+	const Vector solidColor( 1.0f, 1.0f, 1.0f ); // white: solid surfaces
+	const Vector transColor( 0.0f, 1.0f, 0.0f ); // green: translucent surfaces
 
-	pglDisable( GL_DEPTH_TEST );
-	pglEnable( GL_LINE_SMOOTH );
-	GL_Bind( GL_TEXTURE0, tr.whiteTexture );
-	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
-	pglEnable( GL_POLYGON_SMOOTH );
-	pglHint( GL_LINE_SMOOTH_HINT, GL_NICEST );
-	pglHint( GL_POLYGON_SMOOTH_HINT, GL_NICEST );
+	auto submitSurfaceEdges = [&]( msurface_t *surf, const Vector &color ) {
+		mextrasurf_t *es = surf->info;
+		for( int j = 0; j < es->numverts; j++ )
+		{
+			bvert_t *va = &world->vertexes[es->firstvertex + j];
+			bvert_t *vb = &world->vertexes[es->firstvertex + ((j + 1) % es->numverts)];
+			const Vector a = Vector(va->vertex) + Vector(va->normal) * 0.1f;
+			const Vector b = Vector(vb->vertex) + Vector(vb->normal) * 0.1f;
+			visualizer.DrawVector( a, b - a, color, std::nullopt, false );
+		}
+	};
 
-	for( i = 0; i < RI->frame.solid_faces.Count(); i++ )
+	for( int i = 0; i < RI->frame.solid_faces.Count(); i++ )
 	{
 		if( RI->frame.solid_faces[i].m_bDrawType != DRAWTYPE_SURFACE )
 			continue;
-
-		msurface_t *surf = RI->frame.solid_faces[i].m_pSurf;
-		mextrasurf_t *es = surf->info;
-
-		pglBegin( GL_POLYGON );
-		for( int j = 0; j < es->numverts; j++ )
-		{
-			bvert_t *v = &world->vertexes[es->firstvertex + j];
-			pglVertex3fv( v->vertex + Vector( v->normal ) * 0.1f );
-		}
-		pglEnd();
+		submitSurfaceEdges( RI->frame.solid_faces[i].m_pSurf, solidColor );
 	}
 
-	pglColor4f( 0.0f, 1.0f, 0.0f, 0.99f ); 
-	for( i = 0; i < RI->frame.trans_list.Count(); i++ )
+	for( int i = 0; i < RI->frame.trans_list.Count(); i++ )
 	{
 		if( RI->frame.trans_list[i].m_bDrawType != DRAWTYPE_SURFACE )
 			continue;
-
-		msurface_t *surf = RI->frame.trans_list[i].m_pSurf;
-		mextrasurf_t *es = surf->info;
-
-		pglBegin( GL_POLYGON );
-		for( int j = 0; j < es->numverts; j++ )
-		{
-			bvert_t *v = &world->vertexes[es->firstvertex + j];
-			pglVertex3fv( v->vertex + Vector( v->normal ) * 0.1f );
-		}
-		pglEnd();
+		submitSurfaceEdges( RI->frame.trans_list[i].m_pSurf, transColor );
 	}
-
-	pglPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-	pglDisable( GL_POLYGON_SMOOTH );
-	pglDisable( GL_LINE_SMOOTH );
-	pglEnable( GL_DEPTH_TEST );
-	pglDisable( GL_BLEND );
 }
 
 void DrawWirePoly( msurface_t *surf )
 {
-	if( !surf ) 
+	if( !surf )
 		return;
 
 	GL_DEBUG_SCOPE();
-	pglEnable( GL_BLEND );
-	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-	pglPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-	pglColor4f( 0.5f, 1.0f, 0.36f, 0.99f ); 
-	pglLineWidth( 4.0f );
-
-	pglDisable( GL_DEPTH_TEST );
-	pglEnable( GL_LINE_SMOOTH );
-	pglEnable( GL_POLYGON_SMOOTH );
-	pglHint( GL_LINE_SMOOTH_HINT, GL_NICEST );
-	pglHint( GL_POLYGON_SMOOTH_HINT, GL_NICEST );
-
+	auto &visualizer = CDebugVisualizer::GetInstance();
+	const Vector color( 0.5f, 1.0f, 0.36f );
 	mextrasurf_t *es = surf->info;
-
-	pglBegin( GL_POLYGON );
 	for( int j = 0; j < es->numverts; j++ )
 	{
-		bvert_t *v = &world->vertexes[es->firstvertex + j];
-		pglVertex3fv( v->vertex + Vector( v->normal ) * 0.1f );
+		bvert_t *va = &world->vertexes[es->firstvertex + j];
+		bvert_t *vb = &world->vertexes[es->firstvertex + ((j + 1) % es->numverts)];
+		const Vector a = Vector(va->vertex) + Vector(va->normal) * 0.1f;
+		const Vector b = Vector(vb->vertex) + Vector(vb->normal) * 0.1f;
+		visualizer.DrawVector( a, b - a, color, std::nullopt, false, 4.0f );
 	}
-	pglEnd();
-
-	pglPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-	pglDisable( GL_POLYGON_SMOOTH );
-	pglDisable( GL_LINE_SMOOTH );
-	pglEnable( GL_DEPTH_TEST );
-	pglDisable( GL_BLEND );
-	pglLineWidth( 1.0f );
 }
 
 void R_ShowLightMaps( void )
 {
-	int	index = 0;
-
 	if( !CVAR_TO_BOOL( r_showlightmaps ))
 		return;
 
-	index = r_showlightmaps->value - 1.0f;
+	int index = r_showlightmaps->value - 1.0f;
 	if( tr.lightmaps[index].state == LM_FREE )
 		return;
 
-	GL_Bind( GL_TEXTURE0, tr.lightmaps[index].lightmap );
-	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
-	GL_Setup2D();
-
-	pglBegin( GL_QUADS );
-		pglTexCoord2f( 0.0f, 0.0f );
-		pglVertex2f( 0.0f, 0.0f );
-		pglTexCoord2f( 1.0f, 0.0f );
-		pglVertex2f( glState.width, 0.0f );
-		pglTexCoord2f( 1.0f, 1.0f );
-		pglVertex2f( glState.width, glState.height );
-		pglTexCoord2f( 0.0f, 1.0f );
-		pglVertex2f( 0.0f, glState.height );
-	pglEnd();
-
-	GL_Setup3D();
+	CDebugOverlay2D::GetInstance().DrawTexturedRect(
+		0.0f, 0.0f, (float)glState.width, (float)glState.height,
+		tr.lightmaps[index].lightmap);
 }

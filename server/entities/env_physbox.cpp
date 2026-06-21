@@ -23,6 +23,8 @@ LINK_ENTITY_TO_CLASS( env_physbox, CPhysEntity );		// just an alias for VHE
 BEGIN_DATADESC( CPhysEntity )
 	DEFINE_FIELD( m_Material, FIELD_INTEGER ),
 	DEFINE_KEYFIELD( m_iszGibModel, FIELD_STRING, "gibmodel" ),
+	DEFINE_FIELD( m_iszSpawnObject, FIELD_STRING ),
+	DEFINE_KEYFIELD( m_flDensity, FIELD_FLOAT, "density" ),
 END_DATADESC()
 
 void CPhysEntity :: Precache( void )
@@ -84,6 +86,9 @@ void CPhysEntity :: Precache( void )
 
 	if( pGibName != NULL )
 		m_idShard = PRECACHE_MODEL( (char *)pGibName );
+
+	if ( m_iszSpawnObject )
+		UTIL_PrecacheOther( (char *)STRING( m_iszSpawnObject ) );
 }
 
 void CPhysEntity::KeyValue( KeyValueData* pkvd )
@@ -104,6 +109,23 @@ void CPhysEntity::KeyValue( KeyValueData* pkvd )
 	else if (FStrEq(pkvd->szKeyName, "gibmodel") )
 	{
 		m_iszGibModel = ALLOC_STRING(pkvd->szValue);
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "density") )
+	{
+		m_flDensity = MetricDensityToEngine( atof( pkvd->szValue ) );
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "spawnobject"))
+	{
+		int object = atoi( pkvd->szValue );
+		if ( object > 0 && object < MAX_SPAWN_OBJECTS )
+			m_iszSpawnObject = MAKE_STRING( CBreakable::pSpawnObjects[object] );
+		pkvd->fHandled = TRUE;
+	}
+	else if (FStrEq(pkvd->szKeyName, "explodemagnitude"))
+	{
+		pev->impulse = atoi( pkvd->szValue );
 		pkvd->fHandled = TRUE;
 	}
 	else
@@ -172,11 +194,11 @@ void CPhysEntity :: TraceAttack( entvars_t *pevAttacker, float flDamage, Vector 
 	float factor = 0.0f;
 
 	if( bitsDamageType & DMG_CLUB )
-		factor = 80.0f;
+		factor = 4000.0f;
 	else if( bitsDamageType & DMG_BULLET )
-		factor = 45.0f;
-	else if( bitsDamageType & DMG_BLAST )
 		factor = 1000.0f;
+	else if( bitsDamageType & DMG_BLAST )
+		factor = 30000.0f;
 
 	if( factor > 0.0f )
 		WorldPhysic->AddImpulse( this, vecDir, vecOrigin, factor );
@@ -227,8 +249,8 @@ void CPhysEntity :: Touch( CBaseEntity *pOther )
 		if( gpGlobals->trace_plane_normal.z > 0.7f )
 			return;	// if we standing on
 
-		// get the quad part of frametime to apply impulse
-		vecVelocity = pOther->GetAbsVelocity() * (1.0f / gpGlobals->frametime) * 0.25f;
+		// convert player velocity to impulse
+		vecVelocity = pOther->GetAbsVelocity() * 15.0f;
 		if( vecVelocity.z < 0.0f || vecVelocity.z > 0.0f )
 			vecVelocity.z = 0; // don't stress the solver
 
@@ -236,7 +258,7 @@ void CPhysEntity :: Touch( CBaseEntity *pOther )
 		{
 			// NOTE: don't entity origin because it's center of mass!
 			Vector vecDir = (Center() - pOther->GetAbsOrigin()).Normalize();
-			vecVelocity = vecDir * UNSTICK_VELOCITY * (1.0f / gpGlobals->frametime) * 0.25f;
+			vecVelocity = vecDir * UNSTICK_VELOCITY * 15.0f;
 		}
 	}
 
@@ -525,6 +547,14 @@ void CPhysEntity :: Killed( entvars_t *pevAttacker, int iGib )
 	pev->solid = SOLID_NOT;
 	// Fire targets on break
 	SUB_UseTargets( NULL, USE_TOGGLE, 0 );
+
+	// Spawn item on break
+	if ( m_iszSpawnObject )
+		CBaseEntity::Create( (char *)STRING(m_iszSpawnObject), vecSpot, GetAbsAngles(), edict() );
+
+	// Explosive breaking
+	if ( pev->impulse > 0 )
+		ExplosionCreate( Center(), GetAbsAngles(), edict(), pev->impulse, TRUE );
 
 	SetThink( &CBaseEntity::SUB_Remove );
 	SetNextThink( 0.1 );

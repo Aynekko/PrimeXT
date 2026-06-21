@@ -41,10 +41,13 @@ public:
 
 	virtual int ObjectCaps(void);
 	virtual BOOL IsBreakable(void);
+	virtual float GetDensity( void ) const { return m_flDensity; }
 	void SetObjectCollisionBox(void);
 	const char *DamageDecal( int bitsDamageType );
 
 	int	m_idShard;
 	int	m_iszGibModel;
+	int	m_iszSpawnObject;
+	float m_flDensity;
 	Materials m_Material;
 };

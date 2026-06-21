@@ -37,6 +37,7 @@
 #include "hltv.h"
 #include "user_messages.h"
 #include "ropes/CRope.h"
+#include "mathlib.h"
 #include "weapons/egon.h"
 #include "weapons/gauss.h"
 #include "cycler_weapon.h"
@@ -3162,6 +3163,9 @@ void CBasePlayer::LeaveVehicle( const Vector &vecExitPoint, const Vector &vecExi
 
 void CBasePlayer::UpdateHoldableItem( void )
 {
+	// max distance from eye before drag cancels (initial distance + this offset)
+	constexpr float cancelDistOffset = 64.0f;
+
 	if (m_pHoldableItem == NULL )
 		return;
 
@@ -3170,49 +3174,57 @@ void CBasePlayer::UpdateHoldableItem( void )
 	Vector vecSrc = EyePosition ();
 	Vector vecDst = vecSrc + gpGlobals->v_forward * m_flHoldableItemDistance;
 
-	TraceResult tr;
 	if( m_pHoldableItem->m_iActorType == ACTOR_DYNAMIC )
-		UTIL_TraceHull( vecSrc, vecDst, dont_ignore_monsters, head_hull, m_pHoldableItem->edict(), &tr );
-	else TRACE_MONSTER_HULL( m_pHoldableItem->edict(), vecSrc, vecDst, dont_ignore_monsters, m_pHoldableItem->edict(), &tr );
-
-	Vector newOrigin = tr.vecEndPos;
-
-	UTIL_SetOrigin( m_pHoldableItem, newOrigin );
-
-	// make sure what new position is valid
-	if( m_pHoldableItem->m_iActorType == ACTOR_DYNAMIC )
-		UTIL_TraceHull( newOrigin, newOrigin, dont_ignore_monsters, head_hull, m_pHoldableItem->edict(), &tr );
-	else TRACE_MONSTER_HULL( m_pHoldableItem->edict(), newOrigin, newOrigin, dont_ignore_monsters, m_pHoldableItem->edict(), &tr );
-
-	if (tr.fStartSolid || tr.fAllSolid)
 	{
-		// this is bad place. Restore old valid origin
-		UTIL_SetOrigin( m_pHoldableItem, m_vecHoldableItemPosition ); 
+		Vector vecItemPos = m_pHoldableItem->GetAbsOrigin();
 
-		if( m_pHoldableItem->m_iActorType == ACTOR_DYNAMIC )
-			WorldPhysic->UpdateActorPos( m_pHoldableItem );
-#if 0
-		// a pseudocode here:
-		if (m_flLastBlockedTime < gpGlobals->time)
+		// cancel dragging if item is too far from player (e.g. stuck on geometry)
+		Vector vecToItem = vecItemPos - vecSrc;
+		float flDist = vecToItem.Length();
+		if( flDist > m_flHoldableItemDistance + cancelDistOffset )
 		{
-			EMIT_SOUND ("common\item_stuck.wav");
-			m_flLastBlockedTime = gpGlobals->time + 1.0;			
+			DropHoldableItem();
+			return;
 		}
-#endif
-		return;
+
+		// build target quaternion from camera + stored relative rotation
+		matrix3x3 camMat(Vector(0.f, pev->v_angle.y, 0.f));
+		Vector4D camQuat, targetQuat;
+		camMat.GetQuaternion( camQuat );
+		QuaternionMultiply( camQuat, m_quatHoldableRelative, targetQuat );
+
+		WorldPhysic->SetHoldableTarget( m_pHoldableItem, vecDst, targetQuat );
+
+		// refresh the last valid position
+		m_vecHoldableItemPosition = vecItemPos;
 	}
+	else // old kinematic approach for non-dynamic items
+	{
+		TraceResult tr;
+		TRACE_MONSTER_HULL(m_pHoldableItem->edict(), vecSrc, vecDst, dont_ignore_monsters, m_pHoldableItem->edict(), &tr);
 
-	Vector vecAngles = m_pHoldableItem->GetLocalAngles ();
+		Vector newOrigin = tr.vecEndPos;
+		UTIL_SetOrigin(m_pHoldableItem, newOrigin);
 
-	// NOTE: we not afraid gimball lock here because only YAW rotation is used
-	vecAngles.y = m_pHoldableItem->pev->fuser2 + pev->v_angle.y;
-	m_pHoldableItem->SetLocalAngles ( vecAngles );
+		// make sure what new position is valid
+		TRACE_MONSTER_HULL(m_pHoldableItem->edict(), newOrigin, newOrigin, dont_ignore_monsters, m_pHoldableItem->edict(), &tr);
 
-	// refresh the last valid position
-	m_vecHoldableItemPosition = m_pHoldableItem->GetAbsOrigin ();
+		if (tr.fStartSolid || tr.fAllSolid)
+		{
+			// this is bad place. Restore old valid origin
+			UTIL_SetOrigin(m_pHoldableItem, m_vecHoldableItemPosition);
+			return;
+		}
 
-	if( m_pHoldableItem->m_iActorType == ACTOR_DYNAMIC )
-		WorldPhysic->UpdateActorPos( m_pHoldableItem );
+		Vector vecAngles = m_pHoldableItem->GetLocalAngles();
+
+		// NOTE: we not afraid gimball lock here because only YAW rotation is used
+		vecAngles.y = m_pHoldableItem->pev->fuser2 + pev->v_angle.y;
+		m_pHoldableItem->SetLocalAngles(vecAngles);
+
+		// refresh the last valid position
+		m_vecHoldableItemPosition = m_pHoldableItem->GetAbsOrigin();
+	}
 }
 
 void CBasePlayer::PickHoldableItem( CBaseEntity *pObject )
@@ -3225,16 +3237,41 @@ void CBasePlayer::PickHoldableItem( CBaseEntity *pObject )
 	}
 
 	// member distance and the last valid origin
+	constexpr float minimalDistance = 56.0f;
 	m_vecHoldableItemPosition = pObject->GetAbsOrigin();
-	m_flHoldableItemDistance = (m_vecHoldableItemPosition - EyePosition()).Length();
+	m_flHoldableItemDistance = std::max((m_vecHoldableItemPosition - EyePosition()).Length(), minimalDistance);
 
-	pObject->MakeNonMoving ();
 	pObject->ClearGroundEntity ();
 	m_pHoldableItem = pObject;
 	pObject->m_fPicked = TRUE;
+
 	if( m_pHoldableItem->m_iActorType == ACTOR_DYNAMIC )
+	{
+		// keep as dynamic rigid body, zero velocity to prevent momentum
+		WorldPhysic->SetVelocity( m_pHoldableItem, g_vecZero );
+		WorldPhysic->SetAvelocity( m_pHoldableItem, g_vecZero );
+		pObject->SetAbsVelocity( g_vecZero );
+		pObject->SetLocalAvelocity( g_vecZero );
+
+		// store full camera→object relative rotation as quaternion
+		matrix3x3 camMat(Vector(0.f, pev->v_angle.y, 0.f));
+		matrix4x4 objTransform;
+		WorldPhysic->GetTransform( pObject, objTransform );
+		matrix3x3 objMat;
+		objMat = objTransform;
+
+		Vector4D camQuat, objQuat, conjCam;
+		camMat.GetQuaternion( camQuat );
+		objMat.GetQuaternion( objQuat );
+		QuaternionConjugate( camQuat, conjCam );
+		QuaternionMultiply( conjCam, objQuat, m_quatHoldableRelative );
+	}
+	else
+	{
+		pObject->MakeNonMoving ();
 		WorldPhysic->MakeKinematic( m_pHoldableItem, TRUE );
-	pObject->pev->fuser2 = pObject->GetLocalAngles().y - pev->v_angle.y;
+		pObject->pev->fuser2 = pObject->GetLocalAngles().y - pev->v_angle.y;
+	}
 }
 
 void CBasePlayer::DropHoldableItem( void )
@@ -3251,6 +3288,7 @@ void CBasePlayer::DropHoldableItem( void )
 
 	if( pObject->m_iActorType == ACTOR_DYNAMIC )
 	{
+		WorldPhysic->ClearHoldableTarget( pObject );
 		WorldPhysic->MakeKinematic( pObject, FALSE );
 		WorldPhysic->AddForce( pObject, GetAbsVelocity() * 3000.0f );
 	}
@@ -3330,7 +3368,7 @@ void CBasePlayer::SelectNextItem( int iItem )
 	if (pItem == m_pActiveItem)
 	{
 		// select the next one in the chain
-		pItem = m_pActiveItem->m_pNext; 
+		pItem = m_pActiveItem->m_pNext;  
 		if (! pItem)
 		{
 			return;
