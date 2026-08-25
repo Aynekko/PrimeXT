@@ -21,7 +21,7 @@ if(GIT_EXECUTABLE)
 	if(NOT _result EQUAL 0 OR NOT _hash)
 		set(_hash "notset")
 	endif()
-	
+
 	execute_process(
 		COMMAND "${GIT_EXECUTABLE}" rev-parse --abbrev-ref HEAD
 		WORKING_DIRECTORY "${SOURCE_DIR}"

@@ -18,6 +18,7 @@ endif()
 
 add_executable(${PROJECT_NAME} WIN32 ${DIR_SOURCES})
 add_dependencies(${PROJECT_NAME} build_info)
+
 target_include_directories(${PROJECT_NAME} PRIVATE
 	"."
 	"../common"
