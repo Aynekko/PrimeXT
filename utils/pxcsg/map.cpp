@@ -411,6 +411,11 @@ static void SetupSideParams( mapent_t *mapent, brush_t *brush, side_t *side )
 		SetBits(side->flags, FSIDE_NOLIGHTMAP);
 	}
 
+	if (!Q_stricmp(side->name, "blocklight")) // diffusion - blocklight texture
+	{
+		SetBits(side->flags, FSIDE_NOLIGHTMAP);
+	}
+
 	const int shadow = IntForKey( (entity_t *)mapent, "_shadow" );
 
 	if( IntForKey( (entity_t *)mapent, "_dirt" ) == -1 )
