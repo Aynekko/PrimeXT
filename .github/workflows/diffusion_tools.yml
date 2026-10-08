@@ -1,0 +1,158 @@
+name: diffusion_tools
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'documentation/**'
+  pull_request:
+    paths-ignore:
+      - 'documentation/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-utils:
+    runs-on: windows-2022
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VCPKG_FEATURE_FLAGS: dependencygraph
+      # Preset name is only used for the triplet / generator. Build type is forced to Release below.
+      CMAKE_PRESET: windows-x64-release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Create build environment
+        run: cmake -E make_directory ${{ github.workspace }}/build
+
+      - uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: amd64
+
+      # setup-msvc-dev overwrites VCPKG_ROOT on Windows runners
+      - name: Setup vcpkg-related environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('VCPKG_ROOT', `${process.env.GITHUB_WORKSPACE}/external/vcpkg`.replaceAll('\\', '/'));
+            core.exportVariable('VCPKG_DEFAULT_BINARY_CACHE', `${process.env.GITHUB_WORKSPACE}/external/vcpkg/bincache`.replaceAll('\\', '/'));
+
+      - name: Install ninja-build tool
+        uses: seanmiddleditch/gha-setup-ninja@v4
+
+      - name: Create vcpkg binary cache directory
+        shell: bash
+        run: mkdir -p "${VCPKG_DEFAULT_BINARY_CACHE}"
+
+      - name: Restoring cached vcpkg assets
+        id: vcpkg-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}
+            !${{ env.VCPKG_ROOT }}/buildtrees
+            !${{ env.VCPKG_ROOT }}/packages
+            !${{ env.VCPKG_ROOT }}/downloads
+            !${{ env.VCPKG_ROOT }}/installed
+          key: vcpkg-${{ hashFiles('.git/modules/external/vcpkg/HEAD') }}-windows-utils-x64
+          restore-keys: vcpkg-${{ hashFiles('.git/modules/external/vcpkg/HEAD') }}-windows-utils-x64
+
+      - name: Configure CMake
+        working-directory: ${{ github.workspace }}/build
+        run: >
+          cmake "${{ github.workspace }}"
+          --preset ${{ env.CMAKE_PRESET }}
+          -DVCPKG_FORCE_USE_SUBMODULE_DIST=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_CLIENT=OFF
+          -DBUILD_SERVER=OFF
+          -DBUILD_GAME_LAUNCHER=OFF
+          -DENABLE_PHYSX=OFF
+          -DENABLE_TRACY_PROFILER=OFF
+          -DBUILD_UTILS=ON
+          -DBUILD_PXSV=OFF
+          -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=None
+          -DCMAKE_EXE_LINKER_FLAGS_RELEASE=/DEBUG:NONE
+
+      - name: Build selected utils
+        working-directory: ${{ github.workspace }}/build
+        run: >
+          cmake --build . --config Release --parallel
+          --target pxbsp pxcsg pxvis pxrad pxmv pxstudiomdl
+
+      - name: Pack executables
+        shell: pwsh
+        run: |
+          $src = Join-Path $env:GITHUB_WORKSPACE "build/Release/primext/devkit"
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $exes = @(
+            "pxbsp.exe",
+            "pxcsg.exe",
+            "pxvis.exe",
+            "pxrad.exe",
+            "pxmv.exe",
+            "pxstudiomdl.exe"
+          )
+          foreach ($exe in $exes) {
+            $path = Join-Path $src $exe
+            if (-not (Test-Path $path)) {
+              throw "Missing expected binary: $path"
+            }
+            Copy-Item $path -Destination artifacts
+          }
+          # Zip contents, not the folder, so the exes land at the archive root.
+          Compress-Archive -Path artifacts\*.exe -DestinationPath artifacts\primext-utils-windows-x64-release.zip
+          Remove-Item artifacts\*.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: primext-utils-windows-x64-release
+          path: artifacts/primext-utils-windows-x64-release.zip
+
+      - name: Saving vcpkg assets to cache
+        if: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}
+            !${{ env.VCPKG_ROOT }}/buildtrees
+            !${{ env.VCPKG_ROOT }}/packages
+            !${{ env.VCPKG_ROOT }}/downloads
+            !${{ env.VCPKG_ROOT }}/installed
+          key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
+
+  release:
+    needs: build-utils
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' }}
+    steps:
+      - name: Fetch artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Remove old release
+        uses: dev-drprasad/delete-tag-and-release@v0.2.1
+        with:
+          delete_release: true
+          tag_name: continious
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload new release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: artifacts/*.zip
+          tag_name: continious
+          draft: false
+          prerelease: true
+          name: Diffusion Tools Latest (Windows x64)
