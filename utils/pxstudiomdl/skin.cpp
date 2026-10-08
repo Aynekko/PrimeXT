@@ -24,6 +24,27 @@ GNU General Public License for more details.
 #include "builtin.h"
 #include <cmath>
 
+//-----------------------------------------------------------------------------
+// Purpose: check whether an image contains actual transparency (pixels with
+//          alpha below the threshold), as opposed to an unused alpha channel
+//-----------------------------------------------------------------------------
+static bool ImageHasTransparency( const rgbdata_t *pic, float alphaThreshold )
+{
+	if( !FBitSet( pic->flags, IMAGE_HAS_ALPHA ) || FBitSet( pic->flags, IMAGE_DXT_FORMAT ))
+		return false;
+
+	int threshold = (int)floor( alphaThreshold * 255.0f + 0.5f );
+	size_t pixelCount = (size_t)pic->width * pic->height;
+
+	for( size_t i = 0; i < pixelCount; i++ )
+	{
+		if( pic->buffer[i * 4 + 3] < threshold )
+			return true;
+	}
+
+	return false;
+}
+
 void Grab_Skin( s_texture_t *ptexture )
 {
 	bool use_default = false;
@@ -39,6 +60,12 @@ void Grab_Skin( s_texture_t *ptexture )
 	if( !Q_stricmp( ptexture->name, "#white.bmp" ))
 	{
 		pic = ImageUtils::LoadImageMemory( ptexture->name, white_bmp, sizeof( white_bmp ));
+	}
+	else if( ptexture->pembedded )
+	{
+		// texture data is embedded in the source file (glTF/GLB bufferView)
+		pic = ImageUtils::LoadImageMemoryAuto( ptexture->name, ptexture->pembedded, ptexture->embeddsize );
+		if( !pic ) MsgDev( D_ERROR, "unable to decode embedded texture %s\n", ptexture->name );
 	}
 	else
 	{
@@ -73,7 +100,16 @@ void Grab_Skin( s_texture_t *ptexture )
 
 	size_t new_width = 0;
 	size_t new_height = 0;
-	bool transparent = FBitSet(ptexture->flags, STUDIO_NF_MASKED) && FBitSet(pic->flags, IMAGE_HAS_8BIT_ALPHA);
+	bool has8BitAlpha = FBitSet( pic->flags, IMAGE_HAS_8BIT_ALPHA );
+	bool autoMasked = false;
+
+	// in single-file (without QC script) mode there is no place to request $texrendermode masked
+	// so treat textures that actually contain transparency as masked automatically
+	if( g_singlefilemode && ImageHasTransparency( pic, g_alpha_threshold )) {
+		autoMasked = true;
+	}
+
+	bool transparent = (FBitSet( ptexture->flags, STUDIO_NF_MASKED ) && has8BitAlpha ) || autoMasked;
 
 	if (store_uv_coords)
 	{
